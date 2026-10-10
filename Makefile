@@ -9,3 +9,4 @@ lint:
 
 format:
 	npm run format
+

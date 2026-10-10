@@ -14,3 +14,4 @@
    - *Feedback/Fix*: Standard requires initializing `.gitignore` *before* adding files to avoid untracking overhead.
 3. **In-memory data model abstraction**: The `tasksService.js` directly mutates an array instead of using a proper DAO/Repository interface.
    - *Feedback/Fix*: The spec will need to mandate a Repository layer (even if in-memory) to adhere strictly to DDD boundaries.
+

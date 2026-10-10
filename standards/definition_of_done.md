@@ -9,3 +9,4 @@ A task/feature is considered "Done" when it meets the following criteria:
 5. **Documentation:** `spec.md` is updated if necessary. ADRs are added for major architectural decisions.
 6. **Audit & Review:** Code structure corresponds to specification. Unnecessary dependencies are removed.
 7. **Artifacts Delivered:** The implementation can be cleanly reproduced using `make test` or `make run`.
+

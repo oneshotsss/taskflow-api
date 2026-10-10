@@ -16,3 +16,4 @@ Taskflow API — це навчальний бекенд для управлін�
 - `make lint` -> Без помилок
 - `make format` -> Форматування застосовано
 - Версія /version: `a7ac66ac75909b724cce6efd19b51c66d6ece105`
+
