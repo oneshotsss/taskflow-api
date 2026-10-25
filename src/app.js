@@ -1,6 +1,8 @@
 const { execSync } = require('child_process');
 const express = require('express');
 const tasksRouter = require('./routes/tasks');
+const projectsRouter = require('./routes/projects');
+const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 
@@ -21,5 +23,9 @@ app.get('/version', (req, res) => {
 });
 
 app.use('/tasks', tasksRouter);
+app.use('/projects', projectsRouter);
+
+// Global unified error handler
+app.use(errorHandler);
 
 module.exports = app;
