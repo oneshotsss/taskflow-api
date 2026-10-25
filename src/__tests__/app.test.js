@@ -14,6 +14,7 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
       const res = await request(app).get('/health');
       expect(res.statusCode).toEqual(200);
       expect(res.body.status).toEqual('OK');
+      expect(res.headers).toHaveProperty('x-process-id');
     });
 
     it('GET /version returns 200 with version string', async () => {
@@ -21,6 +22,18 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
       expect(res.statusCode).toEqual(200);
       expect(res.body).toHaveProperty('version');
       expect(typeof res.body.version).toBe('string');
+    });
+
+    it('propagates custom X-Process-ID from request into response and error payload', async () => {
+      const customProcessId = 'custom-proc-12345';
+      const res = await request(app)
+        .post('/projects')
+        .set('X-Process-ID', customProcessId)
+        .send({ name: '' });
+
+      expect(res.statusCode).toEqual(400);
+      expect(res.headers['x-process-id']).toEqual(customProcessId);
+      expect(res.body.error.processId).toEqual(customProcessId);
     });
   });
 

@@ -1,13 +1,19 @@
 const { execSync } = require('child_process');
 const express = require('express');
+const contextMiddleware = require('./middleware/contextMiddleware');
 const tasksRouter = require('./routes/tasks');
 const projectsRouter = require('./routes/projects');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 
+// 1. Context propagation via AsyncLocalStorage
+app.use(contextMiddleware);
+
+// 2. Request body parsing
 app.use(express.json());
 
+// 3. Infrastructure endpoints
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK' });
 });
@@ -22,10 +28,11 @@ app.get('/version', (req, res) => {
   res.status(200).json({ version: sha });
 });
 
+// 4. Domain routes
 app.use('/tasks', tasksRouter);
 app.use('/projects', projectsRouter);
 
-// Global unified error handler
+// 5. Global unified error handler
 app.use(errorHandler);
 
 module.exports = app;
