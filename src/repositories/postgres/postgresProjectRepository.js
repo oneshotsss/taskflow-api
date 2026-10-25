@@ -34,6 +34,66 @@ class PostgresProjectRepository {
     return res.rows;
   }
 
+  // Optimized single-query project listing with tasks (ELIMINATES N+1)
+  async findAllWithTasks(client) {
+    const executor = client || getPool();
+    const query = `
+      SELECT 
+        p.id,
+        p.name,
+        p.user_id AS "userId",
+        p.created_at AS "createdAt",
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', t.id,
+              'title', t.title,
+              'status', t.status,
+              'projectId', t.project_id,
+              'createdAt', t.created_at
+            )
+          ) FILTER (WHERE t.id IS NOT NULL),
+          '[]'::json
+        ) AS tasks
+      FROM projects p
+      LEFT JOIN tasks t ON p.id = t.project_id
+      GROUP BY p.id
+      ORDER BY p.id ASC;
+    `;
+    const res = await executor.query(query);
+    return res.rows;
+  }
+
+  // Optimized single-query project details with tasks (ELIMINATES N+1)
+  async findByIdWithTasks(id, client) {
+    const executor = client || getPool();
+    const query = `
+      SELECT 
+        p.id,
+        p.name,
+        p.user_id AS "userId",
+        p.created_at AS "createdAt",
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', t.id,
+              'title', t.title,
+              'status', t.status,
+              'projectId', t.project_id,
+              'createdAt', t.created_at
+            )
+          ) FILTER (WHERE t.id IS NOT NULL),
+          '[]'::json
+        ) AS tasks
+      FROM projects p
+      LEFT JOIN tasks t ON p.id = t.project_id
+      WHERE p.id = $1
+      GROUP BY p.id;
+    `;
+    const res = await executor.query(query, [id]);
+    return res.rows[0] || null;
+  }
+
   async delete(id, client) {
     const executor = client || getPool();
     const query = `DELETE FROM projects WHERE id = $1 RETURNING id;`;

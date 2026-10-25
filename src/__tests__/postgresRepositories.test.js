@@ -77,4 +77,40 @@ describe('PostgreSQL Pool and Transaction Management', () => {
     expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
     expect(mockClient.release).toHaveBeenCalledTimes(1);
   });
+
+  describe('N+1 Query Elimination in PostgresProjectRepository', () => {
+    it('executes exactly 1 single SQL query with LEFT JOIN and json_agg to fetch projects with tasks', async () => {
+      const postgresProjectRepo = require('../repositories/postgres/postgresProjectRepository');
+
+      const mockRows = [
+        {
+          id: 1,
+          name: 'Sprint Alpha',
+          userId: 1,
+          createdAt: new Date().toISOString(),
+          tasks: [
+            { id: 10, title: 'Task 1', status: 'TODO', projectId: 1 },
+            { id: 11, title: 'Task 2', status: 'IN_PROGRESS', projectId: 1 },
+          ],
+        },
+      ];
+
+      const mockPool = {
+        query: jest.fn().mockResolvedValue({ rows: mockRows }),
+        on: jest.fn(),
+        end: jest.fn().mockResolvedValue(),
+      };
+
+      setPool(mockPool);
+
+      const projects = await postgresProjectRepo.findAllWithTasks();
+
+      // Exactly 1 query executed — NO loop queries per project
+      expect(mockPool.query).toHaveBeenCalledTimes(1);
+      const executedSql = mockPool.query.mock.calls[0][0];
+      expect(executedSql).toContain('LEFT JOIN tasks');
+      expect(executedSql).toContain('json_agg');
+      expect(projects).toEqual(mockRows);
+    });
+  });
 });
