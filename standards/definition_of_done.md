@@ -1,12 +1,34 @@
-# Definition of Done (DoD)
+# Definition of Done — Taskflow API
 
-A task/feature is considered "Done" when it meets the following criteria:
+A task/feature is considered "Done" when **all** of the following hold:
 
-1. **Code is Complete:** Implementation aligns with `spec.md`.
-2. **Quality & Standards:** Code passes linter (`npm run lint`), formatter (`npm run format`), and any static analysis checks.
-3. **Tests pass:** The smoke tests / unit tests are successful (`npm run test`).
-4. **Git Pipeline:** Pre-commit/pre-push hooks execute without errors.
-5. **Documentation:** `spec.md` is updated if necessary. ADRs are added for major architectural decisions.
-6. **Audit & Review:** Code structure corresponds to specification. Unnecessary dependencies are removed.
-7. **Artifacts Delivered:** The implementation can be cleanly reproduced using `make test` or `make run`.
+## Code
 
+1. Implementation matches the acceptance criteria listed in `spec.md` §4.
+2. Code follows the layered boundaries: Routes → Controllers → Services. No layer skips.
+3. Every new endpoint has at least one test in `src/__tests__/`.
+
+## Quality Gate (automated)
+
+4. `npm run lint` exits with code 0 — no ESLint errors or warnings.
+5. `npx prettier --check .` passes for all `*.js`, `*.md`, `*.json` files.
+6. `npm run test` — all Jest tests pass.
+7. Pre-commit hook (`lint-staged`) runs without errors.
+8. Pre-push hook (`npm test`) runs without errors.
+
+## Documentation
+
+9. `spec.md` is updated if the feature changes entities, endpoints, or acceptance criteria.
+10. An ADR is created for any new architectural or dependency decision.
+11. `DEFENSE.md` is updated with divergences and verification results.
+
+## Audit
+
+12. Top-3 divergences between `spec.md` and code are documented in `DEFENSE.md` §2 with commit links.
+13. Dependency audit is documented in `docs/adr/0002-dependency-audit.md`.
+
+## Artifacts
+
+14. `make test` reproduces all tests.
+15. `make lint` reproduces linting.
+16. `git log` shows meaningful, atomic commits (not a single bulk commit).

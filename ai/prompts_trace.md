@@ -1,17 +1,68 @@
 # AI Prompts Trace & Audit
 
-## Prompts Trace
-1. **System Prompt**: Initial instructions from the user regarding the creation of a Node.js project (Taskflow API) with specific requirements (linter, formatting, testing, git hooks, standards directory, spec.md, DEFENSE.md).
-2. **Action 1**: Initialized the project, installed dependencies, configured ESLint + Prettier.
-3. **Action 2**: Created standards: Definition of Done, Spec format, Checklist, ADR template.
-4. **Action 3**: Wrote implementation (Express, Routing, Controllers, Services).
-5. **Action 4**: Set up Husky hooks and Jest testing.
+## Prompt 1 (10 Oct 2026)
 
-## AI Output Audit: Top 3 "Cut Corners" by AI
-1. **Simplified error handling**: The AI controller returns plain HTTP 400 without a centralized error handler.
-   - *Feedback/Fix*: A future spec will require `ErrorMiddleware` and consistent JSON error formatting.
-2. **Bypassing hooks for initial commit**: The AI bypassed hooks initially (`--no-verify`) due to staging `node_modules` before proper gitignore setup.
-   - *Feedback/Fix*: Standard requires initializing `.gitignore` *before* adding files to avoid untracking overhead.
-3. **In-memory data model abstraction**: The `tasksService.js` directly mutates an array instead of using a proper DAO/Repository interface.
-   - *Feedback/Fix*: The spec will need to mandate a Repository layer (even if in-memory) to adhere strictly to DDD boundaries.
+**Дослівний промпт:**
 
+> Мета: закласти проєкт і власні інженерні стандарти на весь курс; одразу спроєктувати структуру застосунку.
+> Що зробити: Обрати ідею, створити репозиторій, описати в README.md. Налаштувати пакети, стиль коду, форматтер, лінтер/статичний аналіз. git-hook на commit/push: формат, лінтер, мінімальний smoke-тест, збірка. Власні стандарти (standards/): формат spec, ADR (MADR), власний Definition of Done, перелік перевірок. spec.md: розбиття на компоненти/модулі та взаємодія; дані та зв'язки (напр. ER); як дані оновлюються за ключовими сценаріями. Аудит: чи структура відповідає spec; топ-3 зайві/неправильні залежності. [...] предмет називається нод джес кароче розберись зроби і скажеш шо нажимати
+
+**Що зробив AI**: створив увесь проєкт одним промптом — package.json, ESLint, Prettier, Husky, Jest, Express-застосунок (routes/controllers/services), spec.md, standards/, ADR-0001, DEFENSE.md.
+
+**Мій фідбек**: AI зробив усе одним комітом, проігнорував .gitignore спочатку (node_modules потрапив у git), а потім використав `--no-verify` щоб обійти власні хуки. Це суперечить DoD.
+
+---
+
+## Prompt 2 (10 Oct 2026)
+
+**Дослівний промпт:**
+
+> давай його запустим і глянем шо тут є взагалі
+
+**Що зробив AI**: запустив сервер, протестував GET /health, POST /tasks, GET /tasks через Invoke-RestMethod.
+
+**Мій фідбек**: працює, але ніяких нових тестів чи змін у коді не додав.
+
+---
+
+## Prompt 3 (10 Oct 2026)
+
+**Дослівний промпт:**
+
+> мені нада його на гіт хаб закинути? і шо ше треба?
+
+**Що зробив AI**: дав інструкції для GitHub. Створив порожній коміт через `--allow-empty` для PR.
+
+**Мій фідбек**: порожній коміт — це фейковий PR, він не містить реальної роботи. Це було помічено на рев'ю.
+
+---
+
+## Prompt 4 (25 Oct 2026)
+
+**Дослівний промпт:**
+
+> [Вставив повний текст AI-CHECK фідбеку] кароче хуйня получилась нада пофіксити всьо
+
+**Що зробив AI**: переписав spec.md (прибрав фантомний src/models, додав ER-зв'язки), додав /version ендпоінт + тест, розширив lint-staged на md/json, створив ADR-0002 з аудитом залежностей, переписав DoD і checklist під проєкт, переписав цей файл з дослівними промптами.
+
+---
+
+## AI Output Audit: Top 3 "Cut Corners"
+
+### 1. spec.md заявляв src/models і валідацію projectId — код їх не мав
+
+- **Промпт**: #1 — AI сам вигадав архітектуру
+- **Фідбек**: spec описував шар Models і перевірку projectId, але AI не реалізував жоден з них. Service просто пише `projectId || null`.
+- **Виправлення**: spec.md переписаний (коміт `1c43d25`) — Models прибраний, валідація projectId позначена як відома спрощеність.
+
+### 2. DEFENSE посилався на неіснуючий /version ендпоінт
+
+- **Промпт**: #1 — AI написав у DEFENSE "Версія /version: <sha>" без створення ендпоінту.
+- **Фідбек**: ендпоінт /version не існував у коді.
+- **Виправлення**: ендпоінт /version додано + тест (коміт `acdca60`).
+
+### 3. lint-staged форматував тільки \*.js — markdown/json ігнорувались
+
+- **Промпт**: #1 — AI налаштував lint-staged тільки на `*.js`.
+- **Фідбек**: 6 файлів (md, json) не проходили `prettier --check`.
+- **Виправлення**: lint-staged розширений на `*.{md,json}` (коміт `d30869c`).

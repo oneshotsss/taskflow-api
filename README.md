@@ -14,4 +14,3 @@ It manages Users, Projects, and Tasks.
 - `make run`: Starts the application.
 - `make test`: Runs the test suite.
 - `make lint`: Runs the linter.
-
