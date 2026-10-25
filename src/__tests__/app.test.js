@@ -8,6 +8,13 @@ describe('Taskflow API', () => {
     expect(res.body.status).toEqual('OK');
   });
 
+  it('GET /version returns 200 with version string', async () => {
+    const res = await request(app).get('/version');
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('version');
+    expect(typeof res.body.version).toBe('string');
+  });
+
   it('GET /tasks returns empty array initially', async () => {
     const res = await request(app).get('/tasks');
     expect(res.statusCode).toEqual(200);
