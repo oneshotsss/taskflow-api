@@ -7,4 +7,3 @@
 - [ ] Is `npm run test` executing successfully?
 - [ ] Did pre-commit hooks verify code format successfully?
 - [ ] Are relevant ADRs published for any new major structural decisions?
-

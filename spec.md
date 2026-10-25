@@ -27,10 +27,10 @@ Client → Route → Controller → Service (data store) → Response
 User 1──* Project 1──* Task
 ```
 
-| Entity  | Fields                                        | Belongs to |
-| ------- | --------------------------------------------- | ---------- |
-| User    | `id`, `name`, `email`                         | —          |
-| Project | `id`, `name`, `userId` (FK → User)            | User       |
+| Entity  | Fields                                              | Belongs to |
+| ------- | --------------------------------------------------- | ---------- |
+| User    | `id`, `name`, `email`                               | —          |
+| Project | `id`, `name`, `userId` (FK → User)                  | User       |
 | Task    | `id`, `title`, `status`, `projectId` (FK → Project) | Project    |
 
 - A **User** owns zero or more **Projects** (1:N).
