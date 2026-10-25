@@ -1,6 +1,12 @@
 const { ValidationError, NotFoundError } = require('../errors/AppError');
-let projectRepo = require('../repositories/inMemory/inMemoryProjectRepository');
-let taskRepo = require('../repositories/inMemory/inMemoryTaskRepository');
+const inMemoryProjectRepo = require('../repositories/inMemory/inMemoryProjectRepository');
+const inMemoryTaskRepo = require('../repositories/inMemory/inMemoryTaskRepository');
+const postgresProjectRepo = require('../repositories/postgres/postgresProjectRepository');
+const postgresTaskRepo = require('../repositories/postgres/postgresTaskRepository');
+
+const isPostgres = process.env.REPO_TYPE === 'postgres';
+let projectRepo = isPostgres ? postgresProjectRepo : inMemoryProjectRepo;
+let taskRepo = isPostgres ? postgresTaskRepo : inMemoryTaskRepo;
 
 const setRepositories = (customProjectRepo, customTaskRepo) => {
   if (customProjectRepo) projectRepo = customProjectRepo;
