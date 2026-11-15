@@ -1,14 +1,13 @@
 const { Pool } = require('pg');
 const logger = require('../utils/logger');
 const { DatabaseError } = require('../errors/AppError');
+const config = require('../config');
 
 let pool = null;
 
 const getPoolConfig = () => {
   return {
-    connectionString:
-      process.env.DATABASE_URL ||
-      'postgres://taskflow_user:taskflow_password@localhost:5439/taskflow_db',
+    connectionString: config.databaseUrl,
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 3000,
@@ -46,24 +45,60 @@ const initDatabase = async () => {
   } catch (err) {
     logger.error('Database connection failed on startup (fail-fast check failed)', err);
     throw new DatabaseError(
-      'Unable to connect to database during startup. Check if PostgreSQL container is running on port 5439.',
+      'Unable to connect to database during startup. Check that PostgreSQL is running (docker compose up -d) and DATABASE_URL / POSTGRES_PORT are correct.',
       err.message
     );
   }
 };
 
-const withTransaction = async (callback) => {
-  const currentPool = getPool();
-  const client = await currentPool.connect();
+// SQLSTATEs where PostgreSQL itself says "the transaction was aborted, retry it":
+// 40001 serialization_failure, 40P01 deadlock_detected. The whole transaction
+// was rolled back, so re-running the callback cannot apply anything twice.
+// Connection errors are NOT retried: if one hits during COMMIT the outcome is
+// unknown — that case is covered by Idempotency-Key on the client side.
+const RETRYABLE_SQLSTATES = new Set(['40001', '40P01']);
+const MAX_TX_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 20;
+
+const { setTimeout: sleep } = require('node:timers/promises');
+
+const runTransactionOnce = async (client, callback) => {
   try {
     await client.query('BEGIN');
+    logger.debug('[db] BEGIN');
     const result = await callback(client);
     await client.query('COMMIT');
+    logger.debug('[db] COMMIT');
     return result;
   } catch (err) {
     await client.query('ROLLBACK');
-    logger.error('Transaction rolled back due to error', err);
+    // Client errors (400/409) are expected; only unexpected ones are logged as error.
+    if (err.statusCode && err.statusCode < 500) {
+      logger.warn(`[db] ROLLBACK: ${err.message}`);
+    } else if (RETRYABLE_SQLSTATES.has(err.code)) {
+      logger.warn(`[db] ROLLBACK: transient error SQLSTATE ${err.code}`);
+    } else {
+      logger.error('[db] ROLLBACK due to unexpected error', err);
+    }
     throw err;
+  }
+};
+
+const withTransaction = async (callback) => {
+  const client = await getPool().connect();
+  try {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await runTransactionOnce(client, callback);
+      } catch (err) {
+        if (!RETRYABLE_SQLSTATES.has(err.code) || attempt >= MAX_TX_ATTEMPTS) throw err;
+        const delay = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+        logger.warn(
+          `[db] retrying transaction (attempt ${attempt + 1}/${MAX_TX_ATTEMPTS}) in ${delay}ms`
+        );
+        await sleep(delay);
+      }
+    }
   } finally {
     client.release();
   }
@@ -75,4 +110,5 @@ module.exports = {
   closePool,
   initDatabase,
   withTransaction,
+  MAX_TX_ATTEMPTS,
 };

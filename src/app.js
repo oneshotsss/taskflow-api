@@ -1,6 +1,7 @@
 const { execSync } = require('child_process');
 const express = require('express');
 const contextMiddleware = require('./middleware/contextMiddleware');
+const requestLogger = require('./middleware/requestLogger');
 const tasksRouter = require('./routes/tasks');
 const projectsRouter = require('./routes/projects');
 const errorHandler = require('./middleware/errorHandler');
@@ -9,6 +10,7 @@ const app = express();
 
 // 1. Context propagation via AsyncLocalStorage
 app.use(contextMiddleware);
+app.use(requestLogger);
 
 // 2. Request body parsing
 app.use(express.json());

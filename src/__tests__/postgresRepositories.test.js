@@ -113,4 +113,128 @@ describe('PostgreSQL Pool and Transaction Management', () => {
       expect(projects).toEqual(mockRows);
     });
   });
+
+  describe('Transactional project deletion (Scenario 4)', () => {
+    const postgresProjectRepo = require('../repositories/postgres/postgresProjectRepository');
+
+    const makePool = (client) => ({
+      connect: jest.fn().mockResolvedValue(client),
+      query: jest.fn(),
+      on: jest.fn(),
+      end: jest.fn().mockResolvedValue(),
+    });
+
+    it('deletes tasks and project on one client between BEGIN and COMMIT', async () => {
+      const client = {
+        query: jest.fn().mockResolvedValue({ rows: [{ id: 1 }], rowCount: 2 }),
+        release: jest.fn(),
+      };
+      const pool = makePool(client);
+      setPool(pool);
+
+      const result = await postgresProjectRepo.deleteWithTasks(1);
+
+      const statements = client.query.mock.calls.map((c) => c[0].trim());
+      expect(statements[0]).toBe('BEGIN');
+      expect(statements[1]).toMatch(/^DELETE FROM tasks/);
+      expect(statements[2]).toMatch(/^DELETE FROM projects/);
+      expect(statements[3]).toBe('COMMIT');
+      expect(pool.query).not.toHaveBeenCalled();
+      expect(result).toEqual({ deletedTasks: 2 });
+    });
+
+    it('rolls back task deletion when deleting the project fails', async () => {
+      const client = {
+        query: jest.fn().mockImplementation((q) => {
+          if (q.startsWith('DELETE FROM projects')) return Promise.reject(new Error('boom'));
+          return Promise.resolve({ rows: [], rowCount: 1 });
+        }),
+        release: jest.fn(),
+      };
+      setPool(makePool(client));
+
+      await expect(postgresProjectRepo.deleteWithTasks(1)).rejects.toThrow('boom');
+      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(client.query).not.toHaveBeenCalledWith('COMMIT');
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('PostgreSQL error translation', () => {
+    const { translatePgError } = require('../db/query');
+    const { ValidationError, ConflictError } = require('../errors/AppError');
+    const postgresProjectRepo = require('../repositories/postgres/postgresProjectRepository');
+
+    const pgError = (code, constraint) => Object.assign(new Error('pg'), { code, constraint });
+
+    it('maps FK violation on projects.user_id to a 400 ValidationError', () => {
+      const err = translatePgError(pgError('23503', 'projects_user_id_fkey'));
+      expect(err).toBeInstanceOf(ValidationError);
+      expect(err.statusCode).toBe(400);
+      expect(err.message).toContain('userId');
+    });
+
+    it('maps unique violation to 409 ConflictError', () => {
+      expect(translatePgError(pgError('23505'))).toBeInstanceOf(ConflictError);
+    });
+
+    it('leaves unknown errors untouched (they stay 500)', () => {
+      const original = pgError('08006');
+      expect(translatePgError(original)).toBe(original);
+    });
+
+    it('createWithTasks with unknown userId rolls back and throws ValidationError', async () => {
+      const client = {
+        query: jest.fn().mockImplementation((q) => {
+          if (q.includes('INSERT INTO projects')) {
+            return Promise.reject(pgError('23503', 'projects_user_id_fkey'));
+          }
+          return Promise.resolve({ rows: [] });
+        }),
+        release: jest.fn(),
+      };
+      setPool({ connect: jest.fn().mockResolvedValue(client), on: jest.fn(), end: jest.fn() });
+
+      await expect(
+        postgresProjectRepo.createWithTasks({ name: 'P', userId: 999, initialTasks: [] })
+      ).rejects.toBeInstanceOf(ValidationError);
+      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+    });
+  });
+
+  describe('Transaction retries on transient errors', () => {
+    const { MAX_TX_ATTEMPTS } = require('../db/pool');
+    const transient = (code) => Object.assign(new Error('transient'), { code });
+
+    const setupClient = () => {
+      const client = { query: jest.fn().mockResolvedValue({ rows: [] }), release: jest.fn() };
+      setPool({ connect: jest.fn().mockResolvedValue(client), on: jest.fn(), end: jest.fn() });
+      return client;
+    };
+
+    it.each(['40001', '40P01'])('re-runs the transaction after SQLSTATE %s', async (code) => {
+      const client = setupClient();
+      const callback = jest.fn().mockRejectedValueOnce(transient(code)).mockResolvedValue('ok');
+
+      await expect(withTransaction(callback)).resolves.toBe('ok');
+      expect(callback).toHaveBeenCalledTimes(2);
+      const statements = client.query.mock.calls.map((c) => c[0]);
+      expect(statements).toEqual(['BEGIN', 'ROLLBACK', 'BEGIN', 'COMMIT']);
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives up after MAX_TX_ATTEMPTS', async () => {
+      setupClient();
+      const callback = jest.fn().mockRejectedValue(transient('40001'));
+      await expect(withTransaction(callback)).rejects.toThrow('transient');
+      expect(callback).toHaveBeenCalledTimes(MAX_TX_ATTEMPTS);
+    });
+
+    it('does not retry non-transient errors', async () => {
+      setupClient();
+      const callback = jest.fn().mockRejectedValue(transient('23503'));
+      await expect(withTransaction(callback)).rejects.toThrow();
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -1,91 +1,80 @@
+const crypto = require('node:crypto');
 const { ValidationError, NotFoundError } = require('../errors/AppError');
-const inMemoryProjectRepo = require('../repositories/inMemory/inMemoryProjectRepository');
-const inMemoryTaskRepo = require('../repositories/inMemory/inMemoryTaskRepository');
-const postgresProjectRepo = require('../repositories/postgres/postgresProjectRepository');
-const postgresTaskRepo = require('../repositories/postgres/postgresTaskRepository');
+const { getRepositories } = require('../repositories');
+const { parseId, parseOptionalRef, requireText } = require('./validation');
+const logger = require('../utils/logger');
 
-const isPostgres = process.env.REPO_TYPE === 'postgres';
-let projectRepo = isPostgres ? postgresProjectRepo : inMemoryProjectRepo;
-let taskRepo = isPostgres ? postgresTaskRepo : inMemoryTaskRepo;
+const IDEMPOTENCY_SCOPE = 'POST /projects';
+const IDEMPOTENCY_KEY_PATTERN = /^[!-~]{1,255}$/; // printable ASCII, no spaces
 
-const setRepositories = (customProjectRepo, customTaskRepo) => {
-  if (customProjectRepo) projectRepo = customProjectRepo;
-  if (customTaskRepo) taskRepo = customTaskRepo;
+const buildIdempotency = (idempotencyKey, cleanInput) => {
+  if (idempotencyKey === undefined) return undefined;
+  if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+    throw new ValidationError('Idempotency-Key must be 1-255 printable ASCII characters');
+  }
+  // Hash of the *validated* input: the same logical request always gives the same hash.
+  const requestHash = crypto.createHash('sha256').update(JSON.stringify(cleanInput)).digest('hex');
+  return { scope: IDEMPOTENCY_SCOPE, key: idempotencyKey, requestHash };
 };
 
-const createProject = async ({ name, userId, initialTasks = [] }) => {
-  if (!name || typeof name !== 'string' || name.trim() === '') {
-    throw new ValidationError('Project name is required and cannot be empty');
-  }
+// Returns { project, replayed }. replayed=true means the stored response of an
+// earlier request with the same Idempotency-Key is returned and nothing was created.
+const createProject = async ({ name, userId, initialTasks = [] }, { idempotencyKey } = {}) => {
+  const cleanName = requireText(name, 'Project name');
+  const cleanUserId = parseOptionalRef(userId, 'userId');
 
-  // Validate tasks beforehand
-  if (Array.isArray(initialTasks)) {
-    for (const task of initialTasks) {
-      if (!task.title || typeof task.title !== 'string' || task.title.trim() === '') {
-        throw new ValidationError('Every initial task must have a non-empty title');
-      }
+  if (!Array.isArray(initialTasks)) {
+    throw new ValidationError('initialTasks must be an array when provided');
+  }
+  const cleanTasks = initialTasks.map((task, i) => {
+    if (!task || typeof task !== 'object') {
+      throw new ValidationError(`initialTasks[${i}] must be an object with a title`);
     }
-  }
+    return { title: requireText(task.title, `initialTasks[${i}].title`) };
+  });
 
-  // Call repository to create project & tasks (in-memory or transactional SQL)
-  if (typeof projectRepo.createWithTasks === 'function') {
-    return await projectRepo.createWithTasks({ name: name.trim(), userId, initialTasks });
-  }
+  const input = { name: cleanName, userId: cleanUserId, initialTasks: cleanTasks };
+  const idempotency = buildIdempotency(idempotencyKey, input);
 
-  const project = await projectRepo.create({ name: name.trim(), userId });
-  const tasks = [];
-  try {
-    for (const t of initialTasks) {
-      const createdTask = await taskRepo.create({
-        title: t.title.trim(),
-        projectId: project.id,
-      });
-      tasks.push(createdTask);
-    }
-  } catch (err) {
-    // Rollback for in-memory
-    await projectRepo.delete(project.id);
-    await taskRepo.deleteByProjectId(project.id);
-    throw err;
-  }
-
-  return { ...project, tasks };
+  logger.info(
+    `[service] createProject: "${cleanName}" with ${cleanTasks.length} initial task(s)` +
+      (idempotency ? `, Idempotency-Key ${idempotency.key}` : '')
+  );
+  const { projectRepo } = getRepositories();
+  const result = await projectRepo.createWithTasks(input, { idempotency });
+  logger.info(
+    result.replayed
+      ? `[service] createProject: replayed stored response for project ${result.project.id}`
+      : `[service] createProject: created project ${result.project.id}`
+  );
+  return result;
 };
 
 const getProjects = async () => {
-  if (typeof projectRepo.findAllWithTasks === 'function') {
-    return await projectRepo.findAllWithTasks();
-  }
-  const projects = await projectRepo.findAll();
-  const tasks = await taskRepo.findAll();
-  return projects.map((p) => ({
-    ...p,
-    tasks: tasks.filter((t) => t.projectId === p.id),
-  }));
+  const { projectRepo } = getRepositories();
+  const projects = await projectRepo.findAllWithTasks();
+  logger.info(`[service] getProjects: ${projects.length} project(s)`);
+  return projects;
 };
 
-const getProjectById = async (id) => {
-  if (typeof projectRepo.findByIdWithTasks === 'function') {
-    const project = await projectRepo.findByIdWithTasks(id);
-    if (!project) throw new NotFoundError(`Project with id ${id} not found`);
-    return project;
-  }
-  const project = await projectRepo.findById(id);
-  if (!project) {
-    throw new NotFoundError(`Project with id ${id} not found`);
-  }
-  const tasks = await taskRepo.findByProjectId(id);
-  return { ...project, tasks };
+const getProjectById = async (rawId) => {
+  const id = parseId(rawId, 'project');
+  const { projectRepo } = getRepositories();
+  const project = await projectRepo.findByIdWithTasks(id);
+  if (!project) throw new NotFoundError(`Project with id ${id} not found`);
+  logger.info(`[service] getProjectById: project ${id} with ${project.tasks.length} task(s)`);
+  return project;
 };
 
-const deleteProject = async (id) => {
-  const existing = await projectRepo.findById(id);
-  if (!existing) {
+const deleteProject = async (rawId) => {
+  const id = parseId(rawId, 'project');
+  const { projectRepo } = getRepositories();
+  const result = await projectRepo.deleteWithTasks(id);
+  if (!result) {
     throw new NotFoundError(`Project with id ${id} not found`);
   }
-  await taskRepo.deleteByProjectId(id);
-  await projectRepo.delete(id);
-  return true;
+  logger.info(`[service] deleteProject: project ${id} deleted with ${result.deletedTasks} task(s)`);
+  return result;
 };
 
 module.exports = {
@@ -93,5 +82,4 @@ module.exports = {
   getProjects,
   getProjectById,
   deleteProject,
-  setRepositories,
 };

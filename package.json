@@ -7,8 +7,9 @@
     "test": "jest",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "start": "node src/index.js",
-    "prepare": "husky"
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "prepare": "husky",
+    "test:integration": "jest --config jest.integration.config.js"
   },
   "keywords": [],
   "author": "",

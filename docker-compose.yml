@@ -1,17 +1,25 @@
+# No container_name: containers and volumes are namespaced by the compose
+# project (directory name), so several checkouts/projects can run side by side.
+# The host port is NOT hard-coded: it comes from POSTGRES_PORT in .env
+# (default 5432) and is bound to 127.0.0.1 only. The same variable is used by
+# src/config.js to build DATABASE_URL, so app and container cannot drift apart.
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: taskflow-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: taskflow_user
       POSTGRES_PASSWORD: taskflow_password
       POSTGRES_DB: taskflow_db
     ports:
-      # Isolated port per course recommendations (not 5432/5433/5434)
-      - '5439:5432'
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     volumes:
       - taskflow_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U taskflow_user -d taskflow_db']
+      interval: 2s
+      timeout: 3s
+      retries: 15
 
 volumes:
   taskflow_pgdata:

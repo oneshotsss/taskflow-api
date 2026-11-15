@@ -135,6 +135,22 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
       expect(res.body.error.code).toEqual('VALIDATION_ERROR');
     });
 
+    it.each([
+      ['IN_PROGRESS', 'TODO'],
+      ['DONE', 'IN_PROGRESS'],
+      ['DONE', 'TODO'],
+    ])('rejects transition %s -> %s that spec.md does not allow', async (from, to) => {
+      const { body: task } = await request(app).post('/tasks').send({ title: 'T' });
+      await request(app).patch(`/tasks/${task.id}/status`).send({ status: 'IN_PROGRESS' });
+      if (from === 'DONE') {
+        await request(app).patch(`/tasks/${task.id}/status`).send({ status: 'DONE' });
+      }
+
+      const res = await request(app).patch(`/tasks/${task.id}/status`).send({ status: to });
+      expect(res.statusCode).toEqual(400);
+      expect(res.body.error.message).toContain(`from ${from} to ${to}`);
+    });
+
     it('returns 404 for non-existent task status update', async () => {
       const res = await request(app).patch('/tasks/999/status').send({ status: 'IN_PROGRESS' });
       expect(res.statusCode).toEqual(404);
@@ -162,6 +178,136 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
     it('returns 404 when deleting a non-existent project', async () => {
       const res = await request(app).delete('/projects/999');
       expect(res.statusCode).toEqual(404);
+    });
+  });
+
+  describe('Input validation (400 instead of 500)', () => {
+    it.each(['abc', '1.5', '-1', '0', '99999999999'])(
+      'GET /projects/%s returns 400 VALIDATION_ERROR',
+      async (id) => {
+        const res = await request(app).get(`/projects/${id}`);
+        expect(res.statusCode).toEqual(400);
+        expect(res.body.error.code).toEqual('VALIDATION_ERROR');
+      }
+    );
+
+    it('DELETE /projects/abc returns 400', async () => {
+      const res = await request(app).delete('/projects/abc');
+      expect(res.statusCode).toEqual(400);
+    });
+
+    it('PATCH /tasks/abc/status returns 400', async () => {
+      const res = await request(app).patch('/tasks/abc/status').send({ status: 'IN_PROGRESS' });
+      expect(res.statusCode).toEqual(400);
+    });
+
+    it.each([
+      [{ name: 'P', userId: 'abc' }, 'userId'],
+      [{ name: 'P', initialTasks: 'not-an-array' }, 'initialTasks'],
+      [{ name: 'P', initialTasks: [null] }, 'initialTasks[0]'],
+      [{ name: 'x'.repeat(256) }, '255'],
+    ])('POST /projects %j returns 400', async (body, fragment) => {
+      const res = await request(app).post('/projects').send(body);
+      expect(res.statusCode).toEqual(400);
+      expect(res.body.error.message).toContain(fragment);
+    });
+
+    it('POST /tasks with non-integer projectId returns 400', async () => {
+      const res = await request(app).post('/tasks').send({ title: 'T', projectId: 'x' });
+      expect(res.statusCode).toEqual(400);
+    });
+  });
+
+  describe('Logging: processId on every layer', () => {
+    let logSpy;
+    beforeEach(() => {
+      process.env.LOG_LEVEL = 'debug';
+      logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      process.env.LOG_LEVEL = 'silent';
+      logSpy.mockRestore();
+    });
+
+    it('request, route, service, repository and response lines share the processId', async () => {
+      const processId = 'trace-me-42';
+      await request(app)
+        .post('/projects')
+        .set('X-Process-ID', processId)
+        .send({ name: 'Traced', initialTasks: [{ title: 'one' }] });
+
+      const lines = logSpy.mock.calls.map((c) => c[0]);
+      const ours = lines.filter((l) => l.includes(`[Process: ${processId}]`));
+
+      for (const marker of [
+        '--> POST',
+        '[route] /projects',
+        '[service] createProject',
+        '[memory] project.createWithTasks',
+        '<-- POST /projects 201',
+      ]) {
+        expect(ours.some((l) => l.includes(marker))).toBe(true);
+      }
+      expect(ours).toHaveLength(lines.length);
+    });
+  });
+
+  describe('Idempotency-Key on POST /projects', () => {
+    const body = { name: 'Idem', initialTasks: [{ title: 'a' }] };
+
+    it('replays the stored response and creates nothing on a retry with the same key', async () => {
+      const first = await request(app).post('/projects').set('Idempotency-Key', 'k-1').send(body);
+      const retry = await request(app).post('/projects').set('Idempotency-Key', 'k-1').send(body);
+
+      expect(first.statusCode).toBe(201);
+      expect(first.headers['idempotent-replayed']).toBeUndefined();
+      expect(retry.statusCode).toBe(201);
+      expect(retry.headers['idempotent-replayed']).toBe('true');
+      expect(retry.body).toEqual(first.body);
+      expect(await projectRepo.findAll()).toHaveLength(1);
+      expect(await taskRepo.findAll()).toHaveLength(1);
+    });
+
+    it('treats whitespace-only differences as the same request (hash of validated input)', async () => {
+      await request(app).post('/projects').set('Idempotency-Key', 'k-2').send(body);
+      const retry = await request(app)
+        .post('/projects')
+        .set('Idempotency-Key', 'k-2')
+        .send({ ...body, name: '  Idem  ' });
+      expect(retry.headers['idempotent-replayed']).toBe('true');
+    });
+
+    it('returns 409 CONFLICT_ERROR when the key is reused with a different body', async () => {
+      await request(app).post('/projects').set('Idempotency-Key', 'k-3').send(body);
+      const res = await request(app)
+        .post('/projects')
+        .set('Idempotency-Key', 'k-3')
+        .send({ name: 'Other' });
+      expect(res.statusCode).toBe(409);
+      expect(res.body.error.code).toBe('CONFLICT_ERROR');
+      expect(await projectRepo.findAll()).toHaveLength(1);
+    });
+
+    it('does not store a key for a request that failed validation', async () => {
+      const bad = await request(app).post('/projects').set('Idempotency-Key', 'k-4').send({});
+      expect(bad.statusCode).toBe(400);
+      const ok = await request(app).post('/projects').set('Idempotency-Key', 'k-4').send(body);
+      expect(ok.statusCode).toBe(201);
+      expect(ok.headers['idempotent-replayed']).toBeUndefined();
+    });
+
+    it('creates a new project for each request without a key', async () => {
+      await request(app).post('/projects').send(body);
+      await request(app).post('/projects').send(body);
+      expect(await projectRepo.findAll()).toHaveLength(2);
+    });
+
+    it('rejects a key longer than 255 characters with 400', async () => {
+      const res = await request(app)
+        .post('/projects')
+        .set('Idempotency-Key', 'x'.repeat(256))
+        .send(body);
+      expect(res.statusCode).toBe(400);
     });
   });
 });
