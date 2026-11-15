@@ -1,5 +1,6 @@
 const { ValidationError, NotFoundError } = require('../errors/AppError');
 const { getRepositories } = require('../repositories');
+const { parseId, parseOptionalRef, requireText } = require('./validation');
 
 const ALLOWED_STATUSES = ['TODO', 'IN_PROGRESS', 'DONE'];
 
@@ -15,18 +16,18 @@ const fetchAllTasks = async () => {
 };
 
 const addTask = async ({ title, projectId }) => {
-  if (!title || typeof title !== 'string' || title.trim() === '') {
-    throw new ValidationError('Task title is required and cannot be empty');
-  }
+  const cleanTitle = requireText(title, 'Task title');
+  const cleanProjectId = parseOptionalRef(projectId, 'projectId');
   const { taskRepo } = getRepositories();
   return await taskRepo.create({
-    title: title.trim(),
-    projectId,
+    title: cleanTitle,
+    projectId: cleanProjectId,
     status: 'TODO',
   });
 };
 
-const updateTaskStatus = async (id, newStatus) => {
+const updateTaskStatus = async (rawId, newStatus) => {
+  const id = parseId(rawId, 'task');
   if (!ALLOWED_STATUSES.includes(newStatus)) {
     throw new ValidationError(
       `Invalid status: ${newStatus}. Allowed values: ${ALLOWED_STATUSES.join(', ')}`

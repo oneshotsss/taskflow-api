@@ -164,4 +164,41 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
       expect(res.statusCode).toEqual(404);
     });
   });
+
+  describe('Input validation (400 instead of 500)', () => {
+    it.each(['abc', '1.5', '-1', '0', '99999999999'])(
+      'GET /projects/%s returns 400 VALIDATION_ERROR',
+      async (id) => {
+        const res = await request(app).get(`/projects/${id}`);
+        expect(res.statusCode).toEqual(400);
+        expect(res.body.error.code).toEqual('VALIDATION_ERROR');
+      }
+    );
+
+    it('DELETE /projects/abc returns 400', async () => {
+      const res = await request(app).delete('/projects/abc');
+      expect(res.statusCode).toEqual(400);
+    });
+
+    it('PATCH /tasks/abc/status returns 400', async () => {
+      const res = await request(app).patch('/tasks/abc/status').send({ status: 'IN_PROGRESS' });
+      expect(res.statusCode).toEqual(400);
+    });
+
+    it.each([
+      [{ name: 'P', userId: 'abc' }, 'userId'],
+      [{ name: 'P', initialTasks: 'not-an-array' }, 'initialTasks'],
+      [{ name: 'P', initialTasks: [null] }, 'initialTasks[0]'],
+      [{ name: 'x'.repeat(256) }, '255'],
+    ])('POST /projects %j returns 400', async (body, fragment) => {
+      const res = await request(app).post('/projects').send(body);
+      expect(res.statusCode).toEqual(400);
+      expect(res.body.error.message).toContain(fragment);
+    });
+
+    it('POST /tasks with non-integer projectId returns 400', async () => {
+      const res = await request(app).post('/tasks').send({ title: 'T', projectId: 'x' });
+      expect(res.statusCode).toEqual(400);
+    });
+  });
 });

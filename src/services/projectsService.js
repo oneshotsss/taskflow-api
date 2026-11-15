@@ -1,24 +1,26 @@
 const { ValidationError, NotFoundError } = require('../errors/AppError');
 const { getRepositories } = require('../repositories');
+const { parseId, parseOptionalRef, requireText } = require('./validation');
 
 const createProject = async ({ name, userId, initialTasks = [] }) => {
-  if (!name || typeof name !== 'string' || name.trim() === '') {
-    throw new ValidationError('Project name is required and cannot be empty');
-  }
+  const cleanName = requireText(name, 'Project name');
+  const cleanUserId = parseOptionalRef(userId, 'userId');
 
-  if (Array.isArray(initialTasks)) {
-    for (const task of initialTasks) {
-      if (!task.title || typeof task.title !== 'string' || task.title.trim() === '') {
-        throw new ValidationError('Every initial task must have a non-empty title');
-      }
-    }
+  if (!Array.isArray(initialTasks)) {
+    throw new ValidationError('initialTasks must be an array when provided');
   }
+  const cleanTasks = initialTasks.map((task, i) => {
+    if (!task || typeof task !== 'object') {
+      throw new ValidationError(`initialTasks[${i}] must be an object with a title`);
+    }
+    return { title: requireText(task.title, `initialTasks[${i}].title`) };
+  });
 
   const { projectRepo } = getRepositories();
   return await projectRepo.createWithTasks({
-    name: name.trim(),
-    userId,
-    initialTasks: initialTasks.map((t) => ({ title: t.title.trim() })),
+    name: cleanName,
+    userId: cleanUserId,
+    initialTasks: cleanTasks,
   });
 };
 
@@ -27,14 +29,16 @@ const getProjects = async () => {
   return await projectRepo.findAllWithTasks();
 };
 
-const getProjectById = async (id) => {
+const getProjectById = async (rawId) => {
+  const id = parseId(rawId, 'project');
   const { projectRepo } = getRepositories();
   const project = await projectRepo.findByIdWithTasks(id);
   if (!project) throw new NotFoundError(`Project with id ${id} not found`);
   return project;
 };
 
-const deleteProject = async (id) => {
+const deleteProject = async (rawId) => {
+  const id = parseId(rawId, 'project');
   const { projectRepo } = getRepositories();
   const result = await projectRepo.deleteWithTasks(id);
   if (!result) {

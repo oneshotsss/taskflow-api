@@ -9,7 +9,7 @@ class InMemoryTaskRepository {
       id: this.nextId++,
       title,
       status,
-      projectId: projectId !== undefined ? Number(projectId) : null,
+      projectId: projectId != null ? Number(projectId) : null,
       createdAt: new Date().toISOString(),
     };
     this.tasks.push(task);
