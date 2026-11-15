@@ -1,4 +1,5 @@
 const { getPool } = require('../../db/pool');
+const { runQuery } = require('../../db/query');
 
 class PostgresTaskRepository {
   async create({ title, projectId, status = 'TODO' }, client) {
@@ -8,7 +9,7 @@ class PostgresTaskRepository {
       VALUES ($1, $2, $3)
       RETURNING id, title, status, project_id AS "projectId", created_at AS "createdAt";
     `;
-    const res = await executor.query(query, [title, status, projectId || null]);
+    const res = await runQuery(executor, query, [title, status, projectId || null]);
     return res.rows[0];
   }
 
@@ -19,7 +20,7 @@ class PostgresTaskRepository {
       FROM tasks
       WHERE id = $1;
     `;
-    const res = await executor.query(query, [id]);
+    const res = await runQuery(executor, query, [id]);
     return res.rows[0] || null;
   }
 
@@ -31,7 +32,7 @@ class PostgresTaskRepository {
       WHERE project_id = $1
       ORDER BY id ASC;
     `;
-    const res = await executor.query(query, [projectId]);
+    const res = await runQuery(executor, query, [projectId]);
     return res.rows;
   }
 
@@ -42,7 +43,7 @@ class PostgresTaskRepository {
       FROM tasks
       ORDER BY id ASC;
     `;
-    const res = await executor.query(query);
+    const res = await runQuery(executor, query);
     return res.rows;
   }
 
@@ -54,14 +55,14 @@ class PostgresTaskRepository {
       WHERE id = $2
       RETURNING id, title, status, project_id AS "projectId", created_at AS "createdAt";
     `;
-    const res = await executor.query(query, [newStatus, id]);
+    const res = await runQuery(executor, query, [newStatus, id]);
     return res.rows[0] || null;
   }
 
   async deleteByProjectId(projectId, client) {
     const executor = client || getPool();
     const query = `DELETE FROM tasks WHERE project_id = $1 RETURNING id;`;
-    const res = await executor.query(query, [projectId]);
+    const res = await runQuery(executor, query, [projectId]);
     return res.rowCount;
   }
 }

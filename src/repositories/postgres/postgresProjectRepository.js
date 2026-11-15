@@ -1,4 +1,5 @@
 const { getPool, withTransaction } = require('../../db/pool');
+const { runQuery } = require('../../db/query');
 
 class PostgresProjectRepository {
   async create({ name, userId }, client) {
@@ -8,7 +9,7 @@ class PostgresProjectRepository {
       VALUES ($1, $2)
       RETURNING id, name, user_id AS "userId", created_at AS "createdAt";
     `;
-    const res = await executor.query(query, [name, userId || null]);
+    const res = await runQuery(executor, query, [name, userId || null]);
     return res.rows[0];
   }
 
@@ -19,7 +20,7 @@ class PostgresProjectRepository {
       FROM projects
       WHERE id = $1;
     `;
-    const res = await executor.query(query, [id]);
+    const res = await runQuery(executor, query, [id]);
     return res.rows[0] || null;
   }
 
@@ -30,7 +31,7 @@ class PostgresProjectRepository {
       FROM projects
       ORDER BY id ASC;
     `;
-    const res = await executor.query(query);
+    const res = await runQuery(executor, query);
     return res.rows;
   }
 
@@ -60,7 +61,7 @@ class PostgresProjectRepository {
       GROUP BY p.id
       ORDER BY p.id ASC;
     `;
-    const res = await executor.query(query);
+    const res = await runQuery(executor, query);
     return res.rows;
   }
 
@@ -90,14 +91,14 @@ class PostgresProjectRepository {
       WHERE p.id = $1
       GROUP BY p.id;
     `;
-    const res = await executor.query(query, [id]);
+    const res = await runQuery(executor, query, [id]);
     return res.rows[0] || null;
   }
 
   async delete(id, client) {
     const executor = client || getPool();
     const query = `DELETE FROM projects WHERE id = $1 RETURNING id;`;
-    const res = await executor.query(query, [id]);
+    const res = await runQuery(executor, query, [id]);
     return res.rowCount > 0;
   }
 
@@ -105,10 +106,12 @@ class PostgresProjectRepository {
   // Returns null when the project does not exist (nothing is deleted then).
   async deleteWithTasks(id) {
     return await withTransaction(async (client) => {
-      const tasksRes = await client.query('DELETE FROM tasks WHERE project_id = $1;', [id]);
-      const projectRes = await client.query('DELETE FROM projects WHERE id = $1 RETURNING id;', [
-        id,
-      ]);
+      const tasksRes = await runQuery(client, 'DELETE FROM tasks WHERE project_id = $1;', [id]);
+      const projectRes = await runQuery(
+        client,
+        'DELETE FROM projects WHERE id = $1 RETURNING id;',
+        [id]
+      );
       if (projectRes.rowCount === 0) return null;
       return { deletedTasks: tasksRes.rowCount };
     });
@@ -125,7 +128,7 @@ class PostgresProjectRepository {
           VALUES ($1, 'TODO', $2)
           RETURNING id, title, status, project_id AS "projectId", created_at AS "createdAt";
         `;
-        const taskRes = await client.query(taskQuery, [t.title, project.id]);
+        const taskRes = await runQuery(client, taskQuery, [t.title, project.id]);
         tasks.push(taskRes.rows[0]);
       }
 

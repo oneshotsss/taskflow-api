@@ -159,4 +159,46 @@ describe('PostgreSQL Pool and Transaction Management', () => {
       expect(client.release).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('PostgreSQL error translation', () => {
+    const { translatePgError } = require('../db/query');
+    const { ValidationError, ConflictError } = require('../errors/AppError');
+    const postgresProjectRepo = require('../repositories/postgres/postgresProjectRepository');
+
+    const pgError = (code, constraint) => Object.assign(new Error('pg'), { code, constraint });
+
+    it('maps FK violation on projects.user_id to a 400 ValidationError', () => {
+      const err = translatePgError(pgError('23503', 'projects_user_id_fkey'));
+      expect(err).toBeInstanceOf(ValidationError);
+      expect(err.statusCode).toBe(400);
+      expect(err.message).toContain('userId');
+    });
+
+    it('maps unique violation to 409 ConflictError', () => {
+      expect(translatePgError(pgError('23505'))).toBeInstanceOf(ConflictError);
+    });
+
+    it('leaves unknown errors untouched (they stay 500)', () => {
+      const original = pgError('08006');
+      expect(translatePgError(original)).toBe(original);
+    });
+
+    it('createWithTasks with unknown userId rolls back and throws ValidationError', async () => {
+      const client = {
+        query: jest.fn().mockImplementation((q) => {
+          if (q.includes('INSERT INTO projects')) {
+            return Promise.reject(pgError('23503', 'projects_user_id_fkey'));
+          }
+          return Promise.resolve({ rows: [] });
+        }),
+        release: jest.fn(),
+      };
+      setPool({ connect: jest.fn().mockResolvedValue(client), on: jest.fn(), end: jest.fn() });
+
+      await expect(
+        postgresProjectRepo.createWithTasks({ name: 'P', userId: 999, initialTasks: [] })
+      ).rejects.toBeInstanceOf(ValidationError);
+      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+    });
+  });
 });
