@@ -135,6 +135,22 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
       expect(res.body.error.code).toEqual('VALIDATION_ERROR');
     });
 
+    it.each([
+      ['IN_PROGRESS', 'TODO'],
+      ['DONE', 'IN_PROGRESS'],
+      ['DONE', 'TODO'],
+    ])('rejects transition %s -> %s that spec.md does not allow', async (from, to) => {
+      const { body: task } = await request(app).post('/tasks').send({ title: 'T' });
+      await request(app).patch(`/tasks/${task.id}/status`).send({ status: 'IN_PROGRESS' });
+      if (from === 'DONE') {
+        await request(app).patch(`/tasks/${task.id}/status`).send({ status: 'DONE' });
+      }
+
+      const res = await request(app).patch(`/tasks/${task.id}/status`).send({ status: to });
+      expect(res.statusCode).toEqual(400);
+      expect(res.body.error.message).toContain(`from ${from} to ${to}`);
+    });
+
     it('returns 404 for non-existent task status update', async () => {
       const res = await request(app).patch('/tasks/999/status').send({ status: 'IN_PROGRESS' });
       expect(res.statusCode).toEqual(404);

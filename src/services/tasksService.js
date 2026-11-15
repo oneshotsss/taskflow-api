@@ -6,7 +6,7 @@ const ALLOWED_STATUSES = ['TODO', 'IN_PROGRESS', 'DONE'];
 
 const VALID_TRANSITIONS = {
   TODO: ['IN_PROGRESS'],
-  IN_PROGRESS: ['DONE', 'TODO'],
+  IN_PROGRESS: ['DONE'],
   DONE: [],
 };
 
