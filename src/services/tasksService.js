@@ -1,6 +1,7 @@
 const { ValidationError, NotFoundError } = require('../errors/AppError');
 const { getRepositories } = require('../repositories');
 const { parseId, parseOptionalRef, requireText } = require('./validation');
+const logger = require('../utils/logger');
 
 const ALLOWED_STATUSES = ['TODO', 'IN_PROGRESS', 'DONE'];
 
@@ -12,18 +13,22 @@ const VALID_TRANSITIONS = {
 
 const fetchAllTasks = async () => {
   const { taskRepo } = getRepositories();
-  return await taskRepo.findAll();
+  const tasks = await taskRepo.findAll();
+  logger.info(`[service] fetchAllTasks: ${tasks.length} task(s)`);
+  return tasks;
 };
 
 const addTask = async ({ title, projectId }) => {
   const cleanTitle = requireText(title, 'Task title');
   const cleanProjectId = parseOptionalRef(projectId, 'projectId');
   const { taskRepo } = getRepositories();
-  return await taskRepo.create({
+  const task = await taskRepo.create({
     title: cleanTitle,
     projectId: cleanProjectId,
     status: 'TODO',
   });
+  logger.info(`[service] addTask: created task ${task.id} (project ${task.projectId ?? 'none'})`);
+  return task;
 };
 
 const updateTaskStatus = async (rawId, newStatus) => {
@@ -47,7 +52,9 @@ const updateTaskStatus = async (rawId, newStatus) => {
     );
   }
 
-  return await taskRepo.updateStatus(id, newStatus);
+  const updated = await taskRepo.updateStatus(id, newStatus);
+  logger.info(`[service] updateTaskStatus: task ${id} ${existingTask.status} -> ${newStatus}`);
+  return updated;
 };
 
 module.exports = {

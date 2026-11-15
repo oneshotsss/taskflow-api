@@ -217,4 +217,38 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
       expect(res.statusCode).toEqual(400);
     });
   });
+
+  describe('Logging: processId on every layer', () => {
+    let logSpy;
+    beforeEach(() => {
+      process.env.LOG_LEVEL = 'debug';
+      logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      process.env.LOG_LEVEL = 'silent';
+      logSpy.mockRestore();
+    });
+
+    it('request, route, service, repository and response lines share the processId', async () => {
+      const processId = 'trace-me-42';
+      await request(app)
+        .post('/projects')
+        .set('X-Process-ID', processId)
+        .send({ name: 'Traced', initialTasks: [{ title: 'one' }] });
+
+      const lines = logSpy.mock.calls.map((c) => c[0]);
+      const ours = lines.filter((l) => l.includes(`[Process: ${processId}]`));
+
+      for (const marker of [
+        '--> POST',
+        '[route] /projects',
+        '[service] createProject',
+        '[memory] project.createWithTasks',
+        '<-- POST /projects 201',
+      ]) {
+        expect(ours.some((l) => l.includes(marker))).toBe(true);
+      }
+      expect(ours).toHaveLength(lines.length);
+    });
+  });
 });

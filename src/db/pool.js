@@ -56,12 +56,19 @@ const withTransaction = async (callback) => {
   const client = await currentPool.connect();
   try {
     await client.query('BEGIN');
+    logger.debug('[db] BEGIN');
     const result = await callback(client);
     await client.query('COMMIT');
+    logger.debug('[db] COMMIT');
     return result;
   } catch (err) {
     await client.query('ROLLBACK');
-    logger.error('Transaction rolled back due to error', err);
+    // Client errors (400/409) are expected; only unexpected ones are logged as error.
+    if (err.statusCode && err.statusCode < 500) {
+      logger.warn(`[db] ROLLBACK: ${err.message}`);
+    } else {
+      logger.error('[db] ROLLBACK due to unexpected error', err);
+    }
     throw err;
   } finally {
     client.release();

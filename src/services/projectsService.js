@@ -1,6 +1,7 @@
 const { ValidationError, NotFoundError } = require('../errors/AppError');
 const { getRepositories } = require('../repositories');
 const { parseId, parseOptionalRef, requireText } = require('./validation');
+const logger = require('../utils/logger');
 
 const createProject = async ({ name, userId, initialTasks = [] }) => {
   const cleanName = requireText(name, 'Project name');
@@ -16,17 +17,22 @@ const createProject = async ({ name, userId, initialTasks = [] }) => {
     return { title: requireText(task.title, `initialTasks[${i}].title`) };
   });
 
+  logger.info(`[service] createProject: "${cleanName}" with ${cleanTasks.length} initial task(s)`);
   const { projectRepo } = getRepositories();
-  return await projectRepo.createWithTasks({
+  const project = await projectRepo.createWithTasks({
     name: cleanName,
     userId: cleanUserId,
     initialTasks: cleanTasks,
   });
+  logger.info(`[service] createProject: created project ${project.id}`);
+  return project;
 };
 
 const getProjects = async () => {
   const { projectRepo } = getRepositories();
-  return await projectRepo.findAllWithTasks();
+  const projects = await projectRepo.findAllWithTasks();
+  logger.info(`[service] getProjects: ${projects.length} project(s)`);
+  return projects;
 };
 
 const getProjectById = async (rawId) => {
@@ -34,6 +40,7 @@ const getProjectById = async (rawId) => {
   const { projectRepo } = getRepositories();
   const project = await projectRepo.findByIdWithTasks(id);
   if (!project) throw new NotFoundError(`Project with id ${id} not found`);
+  logger.info(`[service] getProjectById: project ${id} with ${project.tasks.length} task(s)`);
   return project;
 };
 
@@ -44,6 +51,7 @@ const deleteProject = async (rawId) => {
   if (!result) {
     throw new NotFoundError(`Project with id ${id} not found`);
   }
+  logger.info(`[service] deleteProject: project ${id} deleted with ${result.deletedTasks} task(s)`);
   return result;
 };
 

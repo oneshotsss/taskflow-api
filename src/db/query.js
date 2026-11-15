@@ -1,4 +1,5 @@
 const { ValidationError, ConflictError } = require('../errors/AppError');
+const logger = require('../utils/logger');
 
 // Client-caused PostgreSQL errors are mapped to domain errors here, in the data
 // layer, so services and the HTTP error handler never see SQLSTATE codes.
@@ -23,10 +24,20 @@ const translatePgError = (err) => {
   }
 };
 
+// "INSERT INTO projects" / "SELECT p.id, ..." -> short label for logs.
+// Parameters are never logged: they may contain user data.
+const describeSql = (sql) => sql.trim().split(/\s+/).slice(0, 3).join(' ');
+
 const runQuery = async (executor, sql, params = []) => {
+  const startedAt = process.hrtime.bigint();
+  const label = describeSql(sql);
   try {
-    return await executor.query(sql, params);
+    const res = await executor.query(sql, params);
+    const ms = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    logger.debug(`[db] ${label} -> ${res?.rowCount ?? 0} rows, ${ms.toFixed(1)}ms`);
+    return res;
   } catch (err) {
+    logger.warn(`[db] ${label} failed (SQLSTATE ${err.code || 'n/a'}): ${err.message}`);
     throw translatePgError(err);
   }
 };
