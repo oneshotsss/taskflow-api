@@ -201,4 +201,40 @@ describe('PostgreSQL Pool and Transaction Management', () => {
       expect(client.query).toHaveBeenCalledWith('ROLLBACK');
     });
   });
+
+  describe('Transaction retries on transient errors', () => {
+    const { MAX_TX_ATTEMPTS } = require('../db/pool');
+    const transient = (code) => Object.assign(new Error('transient'), { code });
+
+    const setupClient = () => {
+      const client = { query: jest.fn().mockResolvedValue({ rows: [] }), release: jest.fn() };
+      setPool({ connect: jest.fn().mockResolvedValue(client), on: jest.fn(), end: jest.fn() });
+      return client;
+    };
+
+    it.each(['40001', '40P01'])('re-runs the transaction after SQLSTATE %s', async (code) => {
+      const client = setupClient();
+      const callback = jest.fn().mockRejectedValueOnce(transient(code)).mockResolvedValue('ok');
+
+      await expect(withTransaction(callback)).resolves.toBe('ok');
+      expect(callback).toHaveBeenCalledTimes(2);
+      const statements = client.query.mock.calls.map((c) => c[0]);
+      expect(statements).toEqual(['BEGIN', 'ROLLBACK', 'BEGIN', 'COMMIT']);
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives up after MAX_TX_ATTEMPTS', async () => {
+      setupClient();
+      const callback = jest.fn().mockRejectedValue(transient('40001'));
+      await expect(withTransaction(callback)).rejects.toThrow('transient');
+      expect(callback).toHaveBeenCalledTimes(MAX_TX_ATTEMPTS);
+    });
+
+    it('does not retry non-transient errors', async () => {
+      setupClient();
+      const callback = jest.fn().mockRejectedValue(transient('23503'));
+      await expect(withTransaction(callback)).rejects.toThrow();
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+  });
 });
