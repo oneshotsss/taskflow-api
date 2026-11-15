@@ -6,8 +6,12 @@ const {
 } = require('../services/projectsService');
 
 const handleCreateProject = async (req, res) => {
-  const { name, userId, initialTasks } = req.body;
-  const project = await createProject({ name, userId, initialTasks });
+  const { name, userId, initialTasks } = req.body ?? {};
+  const { project, replayed } = await createProject(
+    { name, userId, initialTasks },
+    { idempotencyKey: req.get('Idempotency-Key') }
+  );
+  if (replayed) res.set('Idempotent-Replayed', 'true');
   res.status(201).json(project);
 };
 

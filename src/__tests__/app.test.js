@@ -251,4 +251,63 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
       expect(ours).toHaveLength(lines.length);
     });
   });
+
+  describe('Idempotency-Key on POST /projects', () => {
+    const body = { name: 'Idem', initialTasks: [{ title: 'a' }] };
+
+    it('replays the stored response and creates nothing on a retry with the same key', async () => {
+      const first = await request(app).post('/projects').set('Idempotency-Key', 'k-1').send(body);
+      const retry = await request(app).post('/projects').set('Idempotency-Key', 'k-1').send(body);
+
+      expect(first.statusCode).toBe(201);
+      expect(first.headers['idempotent-replayed']).toBeUndefined();
+      expect(retry.statusCode).toBe(201);
+      expect(retry.headers['idempotent-replayed']).toBe('true');
+      expect(retry.body).toEqual(first.body);
+      expect(await projectRepo.findAll()).toHaveLength(1);
+      expect(await taskRepo.findAll()).toHaveLength(1);
+    });
+
+    it('treats whitespace-only differences as the same request (hash of validated input)', async () => {
+      await request(app).post('/projects').set('Idempotency-Key', 'k-2').send(body);
+      const retry = await request(app)
+        .post('/projects')
+        .set('Idempotency-Key', 'k-2')
+        .send({ ...body, name: '  Idem  ' });
+      expect(retry.headers['idempotent-replayed']).toBe('true');
+    });
+
+    it('returns 409 CONFLICT_ERROR when the key is reused with a different body', async () => {
+      await request(app).post('/projects').set('Idempotency-Key', 'k-3').send(body);
+      const res = await request(app)
+        .post('/projects')
+        .set('Idempotency-Key', 'k-3')
+        .send({ name: 'Other' });
+      expect(res.statusCode).toBe(409);
+      expect(res.body.error.code).toBe('CONFLICT_ERROR');
+      expect(await projectRepo.findAll()).toHaveLength(1);
+    });
+
+    it('does not store a key for a request that failed validation', async () => {
+      const bad = await request(app).post('/projects').set('Idempotency-Key', 'k-4').send({});
+      expect(bad.statusCode).toBe(400);
+      const ok = await request(app).post('/projects').set('Idempotency-Key', 'k-4').send(body);
+      expect(ok.statusCode).toBe(201);
+      expect(ok.headers['idempotent-replayed']).toBeUndefined();
+    });
+
+    it('creates a new project for each request without a key', async () => {
+      await request(app).post('/projects').send(body);
+      await request(app).post('/projects').send(body);
+      expect(await projectRepo.findAll()).toHaveLength(2);
+    });
+
+    it('rejects a key longer than 255 characters with 400', async () => {
+      const res = await request(app)
+        .post('/projects')
+        .set('Idempotency-Key', 'x'.repeat(256))
+        .send(body);
+      expect(res.statusCode).toBe(400);
+    });
+  });
 });

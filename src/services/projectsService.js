@@ -1,9 +1,25 @@
+const crypto = require('node:crypto');
 const { ValidationError, NotFoundError } = require('../errors/AppError');
 const { getRepositories } = require('../repositories');
 const { parseId, parseOptionalRef, requireText } = require('./validation');
 const logger = require('../utils/logger');
 
-const createProject = async ({ name, userId, initialTasks = [] }) => {
+const IDEMPOTENCY_SCOPE = 'POST /projects';
+const IDEMPOTENCY_KEY_PATTERN = /^[!-~]{1,255}$/; // printable ASCII, no spaces
+
+const buildIdempotency = (idempotencyKey, cleanInput) => {
+  if (idempotencyKey === undefined) return undefined;
+  if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+    throw new ValidationError('Idempotency-Key must be 1-255 printable ASCII characters');
+  }
+  // Hash of the *validated* input: the same logical request always gives the same hash.
+  const requestHash = crypto.createHash('sha256').update(JSON.stringify(cleanInput)).digest('hex');
+  return { scope: IDEMPOTENCY_SCOPE, key: idempotencyKey, requestHash };
+};
+
+// Returns { project, replayed }. replayed=true means the stored response of an
+// earlier request with the same Idempotency-Key is returned and nothing was created.
+const createProject = async ({ name, userId, initialTasks = [] }, { idempotencyKey } = {}) => {
   const cleanName = requireText(name, 'Project name');
   const cleanUserId = parseOptionalRef(userId, 'userId');
 
@@ -17,15 +33,21 @@ const createProject = async ({ name, userId, initialTasks = [] }) => {
     return { title: requireText(task.title, `initialTasks[${i}].title`) };
   });
 
-  logger.info(`[service] createProject: "${cleanName}" with ${cleanTasks.length} initial task(s)`);
+  const input = { name: cleanName, userId: cleanUserId, initialTasks: cleanTasks };
+  const idempotency = buildIdempotency(idempotencyKey, input);
+
+  logger.info(
+    `[service] createProject: "${cleanName}" with ${cleanTasks.length} initial task(s)` +
+      (idempotency ? `, Idempotency-Key ${idempotency.key}` : '')
+  );
   const { projectRepo } = getRepositories();
-  const project = await projectRepo.createWithTasks({
-    name: cleanName,
-    userId: cleanUserId,
-    initialTasks: cleanTasks,
-  });
-  logger.info(`[service] createProject: created project ${project.id}`);
-  return project;
+  const result = await projectRepo.createWithTasks(input, { idempotency });
+  logger.info(
+    result.replayed
+      ? `[service] createProject: replayed stored response for project ${result.project.id}`
+      : `[service] createProject: created project ${result.project.id}`
+  );
+  return result;
 };
 
 const getProjects = async () => {

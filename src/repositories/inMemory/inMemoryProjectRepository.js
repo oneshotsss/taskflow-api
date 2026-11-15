@@ -1,5 +1,6 @@
 const logger = require('../../utils/logger');
 const taskRepo = require('./inMemoryTaskRepository');
+const { resolveStoredKey } = require('../idempotency');
 
 // Prototype repository. Exposes the same interface as PostgresProjectRepository
 // so services never branch on the storage type.
@@ -7,6 +8,7 @@ class InMemoryProjectRepository {
   constructor() {
     this.projects = [];
     this.nextId = 1;
+    this.idempotencyKeys = new Map();
   }
 
   async create({ name, userId }) {
@@ -50,14 +52,27 @@ class InMemoryProjectRepository {
 
   // No awaits on real I/O between steps, so this is atomic for the
   // single-threaded prototype: either everything is pushed or nothing is.
-  async createWithTasks({ name, userId, initialTasks }) {
+  async createWithTasks({ name, userId, initialTasks }, { idempotency } = {}) {
     logger.debug('[memory] project.createWithTasks');
-    const project = await this.create({ name, userId });
+    const mapKey = idempotency && `${idempotency.scope}:${idempotency.key}`;
+    if (mapKey && this.idempotencyKeys.has(mapKey)) {
+      return resolveStoredKey(this.idempotencyKeys.get(mapKey), idempotency.requestHash);
+    }
+
+    const created = await this.create({ name, userId });
     const tasks = [];
     for (const t of initialTasks) {
-      tasks.push(await taskRepo.create({ title: t.title, projectId: project.id }));
+      tasks.push(await taskRepo.create({ title: t.title, projectId: created.id }));
     }
-    return { ...project, tasks };
+    const project = JSON.parse(JSON.stringify({ ...created, tasks }));
+
+    if (mapKey) {
+      this.idempotencyKeys.set(mapKey, {
+        requestHash: idempotency.requestHash,
+        responseBody: project,
+      });
+    }
+    return { project, replayed: false };
   }
 
   async delete(id) {
@@ -80,6 +95,7 @@ class InMemoryProjectRepository {
     logger.debug('[memory] project.reset');
     this.projects = [];
     this.nextId = 1;
+    this.idempotencyKeys = new Map();
   }
 }
 

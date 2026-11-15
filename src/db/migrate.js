@@ -28,6 +28,17 @@ const migrate = async (customPool) => {
     );
 
     CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
+
+    -- Idempotency-Key storage for POST /projects (see spec.md, Scenario 1).
+    -- response_body is NULL only inside the transaction that claimed the key.
+    CREATE TABLE IF NOT EXISTS idempotency_keys (
+      scope VARCHAR(50) NOT NULL,
+      key VARCHAR(255) NOT NULL,
+      request_hash CHAR(64) NOT NULL,
+      response_body JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (scope, key)
+    );
   `;
 
   await pool.query(ddl);
