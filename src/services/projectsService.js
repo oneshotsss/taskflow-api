@@ -1,24 +1,11 @@
 const { ValidationError, NotFoundError } = require('../errors/AppError');
-const inMemoryProjectRepo = require('../repositories/inMemory/inMemoryProjectRepository');
-const inMemoryTaskRepo = require('../repositories/inMemory/inMemoryTaskRepository');
-const postgresProjectRepo = require('../repositories/postgres/postgresProjectRepository');
-const postgresTaskRepo = require('../repositories/postgres/postgresTaskRepository');
-
-const isPostgres = process.env.REPO_TYPE === 'postgres';
-let projectRepo = isPostgres ? postgresProjectRepo : inMemoryProjectRepo;
-let taskRepo = isPostgres ? postgresTaskRepo : inMemoryTaskRepo;
-
-const setRepositories = (customProjectRepo, customTaskRepo) => {
-  if (customProjectRepo) projectRepo = customProjectRepo;
-  if (customTaskRepo) taskRepo = customTaskRepo;
-};
+const { getRepositories } = require('../repositories');
 
 const createProject = async ({ name, userId, initialTasks = [] }) => {
   if (!name || typeof name !== 'string' || name.trim() === '') {
     throw new ValidationError('Project name is required and cannot be empty');
   }
 
-  // Validate tasks beforehand
   if (Array.isArray(initialTasks)) {
     for (const task of initialTasks) {
       if (!task.title || typeof task.title !== 'string' || task.title.trim() === '') {
@@ -27,58 +14,28 @@ const createProject = async ({ name, userId, initialTasks = [] }) => {
     }
   }
 
-  // Call repository to create project & tasks (in-memory or transactional SQL)
-  if (typeof projectRepo.createWithTasks === 'function') {
-    return await projectRepo.createWithTasks({ name: name.trim(), userId, initialTasks });
-  }
-
-  const project = await projectRepo.create({ name: name.trim(), userId });
-  const tasks = [];
-  try {
-    for (const t of initialTasks) {
-      const createdTask = await taskRepo.create({
-        title: t.title.trim(),
-        projectId: project.id,
-      });
-      tasks.push(createdTask);
-    }
-  } catch (err) {
-    // Rollback for in-memory
-    await projectRepo.delete(project.id);
-    await taskRepo.deleteByProjectId(project.id);
-    throw err;
-  }
-
-  return { ...project, tasks };
+  const { projectRepo } = getRepositories();
+  return await projectRepo.createWithTasks({
+    name: name.trim(),
+    userId,
+    initialTasks: initialTasks.map((t) => ({ title: t.title.trim() })),
+  });
 };
 
 const getProjects = async () => {
-  if (typeof projectRepo.findAllWithTasks === 'function') {
-    return await projectRepo.findAllWithTasks();
-  }
-  const projects = await projectRepo.findAll();
-  const tasks = await taskRepo.findAll();
-  return projects.map((p) => ({
-    ...p,
-    tasks: tasks.filter((t) => t.projectId === p.id),
-  }));
+  const { projectRepo } = getRepositories();
+  return await projectRepo.findAllWithTasks();
 };
 
 const getProjectById = async (id) => {
-  if (typeof projectRepo.findByIdWithTasks === 'function') {
-    const project = await projectRepo.findByIdWithTasks(id);
-    if (!project) throw new NotFoundError(`Project with id ${id} not found`);
-    return project;
-  }
-  const project = await projectRepo.findById(id);
-  if (!project) {
-    throw new NotFoundError(`Project with id ${id} not found`);
-  }
-  const tasks = await taskRepo.findByProjectId(id);
-  return { ...project, tasks };
+  const { projectRepo } = getRepositories();
+  const project = await projectRepo.findByIdWithTasks(id);
+  if (!project) throw new NotFoundError(`Project with id ${id} not found`);
+  return project;
 };
 
 const deleteProject = async (id) => {
+  const { projectRepo, taskRepo } = getRepositories();
   const existing = await projectRepo.findById(id);
   if (!existing) {
     throw new NotFoundError(`Project with id ${id} not found`);
@@ -93,5 +50,4 @@ module.exports = {
   getProjects,
   getProjectById,
   deleteProject,
-  setRepositories,
 };

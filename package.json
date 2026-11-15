@@ -7,7 +7,7 @@
     "test": "jest",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "start": "node src/index.js",
+    "start": "node --env-file-if-exists=.env src/index.js",
     "prepare": "husky"
   },
   "keywords": [],

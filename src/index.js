@@ -2,9 +2,7 @@ const app = require('./app');
 const { initDatabase } = require('./db/pool');
 const { migrate } = require('./db/migrate');
 const logger = require('./utils/logger');
-
-const PORT = process.env.PORT || 3000;
-const REPO_TYPE = process.env.REPO_TYPE || 'postgres';
+const { port: PORT, repoType: REPO_TYPE } = require('./config');
 
 const start = async () => {
   if (REPO_TYPE === 'postgres') {

@@ -1,13 +1,5 @@
 const { ValidationError, NotFoundError } = require('../errors/AppError');
-const inMemoryTaskRepo = require('../repositories/inMemory/inMemoryTaskRepository');
-const postgresTaskRepo = require('../repositories/postgres/postgresTaskRepository');
-
-const isPostgres = process.env.REPO_TYPE === 'postgres';
-let taskRepo = isPostgres ? postgresTaskRepo : inMemoryTaskRepo;
-
-const setTaskRepository = (customTaskRepo) => {
-  if (customTaskRepo) taskRepo = customTaskRepo;
-};
+const { getRepositories } = require('../repositories');
 
 const ALLOWED_STATUSES = ['TODO', 'IN_PROGRESS', 'DONE'];
 
@@ -18,6 +10,7 @@ const VALID_TRANSITIONS = {
 };
 
 const fetchAllTasks = async () => {
+  const { taskRepo } = getRepositories();
   return await taskRepo.findAll();
 };
 
@@ -25,6 +18,7 @@ const addTask = async ({ title, projectId }) => {
   if (!title || typeof title !== 'string' || title.trim() === '') {
     throw new ValidationError('Task title is required and cannot be empty');
   }
+  const { taskRepo } = getRepositories();
   return await taskRepo.create({
     title: title.trim(),
     projectId,
@@ -39,6 +33,7 @@ const updateTaskStatus = async (id, newStatus) => {
     );
   }
 
+  const { taskRepo } = getRepositories();
   const existingTask = await taskRepo.findById(id);
   if (!existingTask) {
     throw new NotFoundError(`Task with id ${id} not found`);
@@ -58,5 +53,4 @@ module.exports = {
   fetchAllTasks,
   addTask,
   updateTaskStatus,
-  setTaskRepository,
 };

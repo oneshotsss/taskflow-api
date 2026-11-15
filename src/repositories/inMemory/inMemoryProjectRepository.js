@@ -1,3 +1,7 @@
+const taskRepo = require('./inMemoryTaskRepository');
+
+// Prototype repository. Exposes the same interface as PostgresProjectRepository
+// so services never branch on the storage type.
 class InMemoryProjectRepository {
   constructor() {
     this.projects = [];
@@ -22,6 +26,31 @@ class InMemoryProjectRepository {
 
   async findAll() {
     return this.projects.map((p) => ({ ...p }));
+  }
+
+  async findAllWithTasks() {
+    const tasks = await taskRepo.findAll();
+    return this.projects.map((p) => ({
+      ...p,
+      tasks: tasks.filter((t) => t.projectId === p.id),
+    }));
+  }
+
+  async findByIdWithTasks(id) {
+    const project = await this.findById(id);
+    if (!project) return null;
+    return { ...project, tasks: await taskRepo.findByProjectId(id) };
+  }
+
+  // No awaits on real I/O between steps, so this is atomic for the
+  // single-threaded prototype: either everything is pushed or nothing is.
+  async createWithTasks({ name, userId, initialTasks }) {
+    const project = await this.create({ name, userId });
+    const tasks = [];
+    for (const t of initialTasks) {
+      tasks.push(await taskRepo.create({ title: t.title, projectId: project.id }));
+    }
+    return { ...project, tasks };
   }
 
   async delete(id) {

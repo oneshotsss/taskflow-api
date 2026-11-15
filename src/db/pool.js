@@ -1,14 +1,13 @@
 const { Pool } = require('pg');
 const logger = require('../utils/logger');
 const { DatabaseError } = require('../errors/AppError');
+const config = require('../config');
 
 let pool = null;
 
 const getPoolConfig = () => {
   return {
-    connectionString:
-      process.env.DATABASE_URL ||
-      'postgres://taskflow_user:taskflow_password@localhost:5439/taskflow_db',
+    connectionString: config.databaseUrl,
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 3000,
@@ -46,7 +45,7 @@ const initDatabase = async () => {
   } catch (err) {
     logger.error('Database connection failed on startup (fail-fast check failed)', err);
     throw new DatabaseError(
-      'Unable to connect to database during startup. Check if PostgreSQL container is running on port 5439.',
+      'Unable to connect to database during startup. Check that PostgreSQL is running (docker compose up -d) and DATABASE_URL / POSTGRES_PORT are correct.',
       err.message
     );
   }
