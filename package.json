@@ -8,7 +8,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "start": "node --env-file-if-exists=.env src/index.js",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:integration": "jest --config jest.integration.config.js"
   },
   "keywords": [],
   "author": "",
