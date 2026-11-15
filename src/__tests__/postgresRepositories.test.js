@@ -113,4 +113,50 @@ describe('PostgreSQL Pool and Transaction Management', () => {
       expect(projects).toEqual(mockRows);
     });
   });
+
+  describe('Transactional project deletion (Scenario 4)', () => {
+    const postgresProjectRepo = require('../repositories/postgres/postgresProjectRepository');
+
+    const makePool = (client) => ({
+      connect: jest.fn().mockResolvedValue(client),
+      query: jest.fn(),
+      on: jest.fn(),
+      end: jest.fn().mockResolvedValue(),
+    });
+
+    it('deletes tasks and project on one client between BEGIN and COMMIT', async () => {
+      const client = {
+        query: jest.fn().mockResolvedValue({ rows: [{ id: 1 }], rowCount: 2 }),
+        release: jest.fn(),
+      };
+      const pool = makePool(client);
+      setPool(pool);
+
+      const result = await postgresProjectRepo.deleteWithTasks(1);
+
+      const statements = client.query.mock.calls.map((c) => c[0].trim());
+      expect(statements[0]).toBe('BEGIN');
+      expect(statements[1]).toMatch(/^DELETE FROM tasks/);
+      expect(statements[2]).toMatch(/^DELETE FROM projects/);
+      expect(statements[3]).toBe('COMMIT');
+      expect(pool.query).not.toHaveBeenCalled();
+      expect(result).toEqual({ deletedTasks: 2 });
+    });
+
+    it('rolls back task deletion when deleting the project fails', async () => {
+      const client = {
+        query: jest.fn().mockImplementation((q) => {
+          if (q.startsWith('DELETE FROM projects')) return Promise.reject(new Error('boom'));
+          return Promise.resolve({ rows: [], rowCount: 1 });
+        }),
+        release: jest.fn(),
+      };
+      setPool(makePool(client));
+
+      await expect(postgresProjectRepo.deleteWithTasks(1)).rejects.toThrow('boom');
+      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(client.query).not.toHaveBeenCalledWith('COMMIT');
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+  });
 });

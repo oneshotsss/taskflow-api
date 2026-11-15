@@ -35,14 +35,12 @@ const getProjectById = async (id) => {
 };
 
 const deleteProject = async (id) => {
-  const { projectRepo, taskRepo } = getRepositories();
-  const existing = await projectRepo.findById(id);
-  if (!existing) {
+  const { projectRepo } = getRepositories();
+  const result = await projectRepo.deleteWithTasks(id);
+  if (!result) {
     throw new NotFoundError(`Project with id ${id} not found`);
   }
-  await taskRepo.deleteByProjectId(id);
-  await projectRepo.delete(id);
-  return true;
+  return result;
 };
 
 module.exports = {

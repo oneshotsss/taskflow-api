@@ -101,6 +101,19 @@ class PostgresProjectRepository {
     return res.rowCount > 0;
   }
 
+  // Scenario 4: tasks and project are removed in ONE transaction on ONE client.
+  // Returns null when the project does not exist (nothing is deleted then).
+  async deleteWithTasks(id) {
+    return await withTransaction(async (client) => {
+      const tasksRes = await client.query('DELETE FROM tasks WHERE project_id = $1;', [id]);
+      const projectRes = await client.query('DELETE FROM projects WHERE id = $1 RETURNING id;', [
+        id,
+      ]);
+      if (projectRes.rowCount === 0) return null;
+      return { deletedTasks: tasksRes.rowCount };
+    });
+  }
+
   async createWithTasks({ name, userId, initialTasks }) {
     return await withTransaction(async (client) => {
       const project = await this.create({ name, userId }, client);

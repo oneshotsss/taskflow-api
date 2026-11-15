@@ -60,6 +60,13 @@ class InMemoryProjectRepository {
     return true;
   }
 
+  async deleteWithTasks(id) {
+    if (!(await this.findById(id))) return null;
+    const deletedTasks = await taskRepo.deleteByProjectId(id);
+    await this.delete(id);
+    return { deletedTasks };
+  }
+
   async reset() {
     this.projects = [];
     this.nextId = 1;
