@@ -62,6 +62,9 @@ const RETRY_BASE_DELAY_MS = 20;
 
 const { setTimeout: sleep } = require('node:timers/promises');
 
+// Exponential backoff: 20ms, 40ms, 80ms, ... before attempt 2, 3, 4, ...
+const retryDelayMs = (failedAttempt) => RETRY_BASE_DELAY_MS * 2 ** (failedAttempt - 1);
+
 const runTransactionOnce = async (client, callback) => {
   try {
     await client.query('BEGIN');
@@ -92,7 +95,7 @@ const withTransaction = async (callback) => {
         return await runTransactionOnce(client, callback);
       } catch (err) {
         if (!RETRYABLE_SQLSTATES.has(err.code) || attempt >= MAX_TX_ATTEMPTS) throw err;
-        const delay = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+        const delay = retryDelayMs(attempt);
         logger.warn(
           `[db] retrying transaction (attempt ${attempt + 1}/${MAX_TX_ATTEMPTS}) in ${delay}ms`
         );
@@ -110,5 +113,6 @@ module.exports = {
   closePool,
   initDatabase,
   withTransaction,
+  retryDelayMs,
   MAX_TX_ATTEMPTS,
 };
