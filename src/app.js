@@ -5,6 +5,7 @@ const requestLogger = require('./middleware/requestLogger');
 const tasksRouter = require('./routes/tasks');
 const projectsRouter = require('./routes/projects');
 const errorHandler = require('./middleware/errorHandler');
+const { NotFoundError } = require('./errors/AppError');
 
 const app = express();
 
@@ -34,7 +35,12 @@ app.get('/version', (req, res) => {
 app.use('/tasks', tasksRouter);
 app.use('/projects', projectsRouter);
 
-// 5. Global unified error handler
+// 5. Unknown routes get the same JSON error contract instead of Express's HTML page
+app.use((req, res, next) => {
+  next(new NotFoundError(`Route ${req.method} ${req.path} not found`));
+});
+
+// 6. Global unified error handler
 app.use(errorHandler);
 
 module.exports = app;
