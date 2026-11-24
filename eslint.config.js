@@ -20,6 +20,9 @@ module.exports = [
         afterAll: 'readonly',
         jest: 'readonly',
         console: 'readonly',
+        fetch: 'readonly',
+        setTimeout: 'readonly',
+        globalThis: 'readonly',
       },
     },
     rules: {
