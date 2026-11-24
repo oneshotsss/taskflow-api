@@ -29,6 +29,10 @@ A task/feature is considered "Done" when **all** of the following hold:
 
 ## Artifacts
 
-14. `make test` reproduces all tests.
+14. `make test` reproduces all tests — it starts PostgreSQL itself and runs unit, API, integration
+    and E2E; coverage thresholds (branches) pass.
 15. `make lint` reproduces linting.
 16. `git log` shows meaningful, atomic commits (not a single bulk commit).
+17. `make mutation` passes the Stryker `break` threshold (90%); new surviving mutants are classified
+    in `docs/testing/mutation-report.md` (real gap → fix the test; equivalent / acceptable → explain).
+18. A bug fix comes with a test that fails without the fix.

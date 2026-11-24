@@ -136,10 +136,16 @@ All errors return the following structure:
 
 Standard HTTP Error Codes:
 
-- `400 Bad Request` (`VALIDATION_ERROR`)
-- `404 Not Found` (`NOT_FOUND`)
+- `400 Bad Request` (`VALIDATION_ERROR`) — invalid fields or ids, a missing body, a body that is not valid JSON
+- `404 Not Found` (`NOT_FOUND`) — unknown entity, and also unknown routes (JSON, not an HTML page)
 - `409 Conflict` (`CONFLICT_ERROR`)
-- `500 Internal Server Error` (`INTERNAL_SERVER_ERROR`)
+- `413 Payload Too Large` (`PAYLOAD_TOO_LARGE`)
+- `500 Internal Server Error` (`INTERNAL_SERVER_ERROR`) — the message is always the generic
+  `"An unexpected error occurred"` unless the error is one of ours (`AppError`); internals such as
+  driver messages are only logged, together with the `processId` the client receives.
+
+Timestamps (`createdAt`) are ISO-8601 UTC with milliseconds (`2026-11-24T09:14:36.325Z`) in every
+response, whether the entity comes from `POST` or `GET`.
 
 ---
 
@@ -153,3 +159,18 @@ Standard HTTP Error Codes:
 6. **Context Propagation**: `processId` appears in every log and error response via `AsyncLocalStorage`.
 7. **Single Error Handler**: Express error middleware handles all errors without per-route try/catch blocks.
 8. **Automated Verification**: `npm test` passes covering all 4 core scenarios and error paths.
+
+## 7. Testing (Laboratory Work 3)
+
+Strategy and tool choice: ADR-0006. Results and analysis: `DEFENSE.md`.
+
+1. **All levels**: unit (one module per file, stubs), API (supertest + in-memory), integration
+   (supertest + PostgreSQL `taskflow_test`), E2E (`node src/index.js` + PostgreSQL
+   `taskflow_e2e_test`, HTTP only).
+2. **One command**: `make test` (`npm run test:all`) starts PostgreSQL, migrates, starts the service
+   and runs every level; non-zero exit code if any level fails.
+3. **Branch coverage gates**: unit + API ≥ 90% branches globally and 100% branches for services,
+   error handler, `db/query`, `db/pool`, idempotency; integration: 100% lines of the SQL repositories.
+4. **Fully covered unit module**: `src/services/validation.js` — 100% branches, 100% mutation score.
+5. **Mutation testing**: `make mutation` (Stryker), score ≥ 90% (`break` threshold); every survivor
+   classified in `docs/testing/mutation-report.md`.
