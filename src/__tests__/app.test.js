@@ -72,9 +72,73 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
       expect(res.statusCode).toEqual(400);
       expect(res.body.error.code).toEqual('VALIDATION_ERROR');
 
-      // Verify rollback
-      const projects = await projectRepo.findAll();
-      expect(projects).toHaveLength(0);
+      // Validation runs before the repository, so neither the project nor the
+      // first (valid) task may exist. Checking only projects missed orphan tasks.
+      expect(await projectRepo.findAll()).toHaveLength(0);
+      expect(await taskRepo.findAll()).toHaveLength(0);
+    });
+  });
+
+  describe('Requests the controllers did not expect', () => {
+    it.each([
+      ['/tasks', 'Task title is required and cannot be empty'],
+      ['/projects', 'Project name is required and cannot be empty'],
+    ])('POST %s without a JSON body -> 400, not a 500 TypeError', async (url, message) => {
+      const res = await request(app).post(url).set('Content-Type', 'text/plain').send('x');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toMatchObject({ code: 'VALIDATION_ERROR', message });
+    });
+
+    it('PATCH /tasks/:id/status without a body -> 400 invalid status', async () => {
+      const { body: task } = await request(app).post('/tasks').send({ title: 'T' });
+      const res = await request(app).patch(`/tasks/${task.id}/status`);
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error.message).toContain('Invalid status: undefined');
+    });
+
+    it('malformed JSON -> 400 VALIDATION_ERROR', async () => {
+      const res = await request(app)
+        .post('/projects')
+        .set('Content-Type', 'application/json')
+        .send('{"name": ');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('unknown route -> JSON 404 in the common error format', async () => {
+      const res = await request(app).get('/nope').set('X-Process-ID', 'p-404');
+      expect(res.statusCode).toBe(404);
+      expect(res.type).toBe('application/json');
+      expect(res.body.error).toEqual({
+        code: 'NOT_FOUND',
+        message: 'Route GET /nope not found',
+        processId: 'p-404',
+        details: null,
+      });
+    });
+  });
+
+  describe('POST /tasks', () => {
+    it('stores and returns the title, projectId and default status', async () => {
+      const { body: project } = await request(app).post('/projects').send({ name: 'P' });
+      const res = await request(app)
+        .post('/tasks')
+        .send({ title: '  Write docs ', projectId: project.id });
+
+      expect(res.statusCode).toBe(201);
+      expect(res.body).toMatchObject({
+        title: 'Write docs',
+        projectId: project.id,
+        status: 'TODO',
+      });
+      const listed = await request(app).get('/tasks');
+      expect(listed.body).toEqual([res.body]);
+    });
+
+    it('creates a task without a project (projectId null)', async () => {
+      const res = await request(app).post('/tasks').send({ title: 'Inbox' });
+      expect(res.statusCode).toBe(201);
+      expect(res.body.projectId).toBeNull();
     });
   });
 
@@ -167,12 +231,23 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
           initialTasks: [{ title: 'Task to be deleted' }],
         });
 
+      const other = await request(app)
+        .post('/projects')
+        .send({ name: 'Keep me', initialTasks: [{ title: 'Survivor' }] });
+
       const res = await request(app).delete(`/projects/${project.body.id}`);
       expect(res.statusCode).toEqual(204);
+      expect(res.text).toBe('');
 
       // Verify deletion
       const checkProject = await request(app).get(`/projects/${project.body.id}`);
       expect(checkProject.statusCode).toEqual(404);
+
+      // The cascade part of Scenario 4: the project's tasks are gone, other
+      // projects' tasks are untouched. Earlier the test only checked the 404.
+      const tasks = await request(app).get('/tasks');
+      expect(tasks.body.map((t) => t.title)).toEqual(['Survivor']);
+      expect(tasks.body[0].projectId).toBe(other.body.id);
     });
 
     it('returns 404 when deleting a non-existent project', async () => {
@@ -201,7 +276,26 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
       expect(res.statusCode).toEqual(400);
     });
 
+    it.each(['01', '1e3', '2147483648'])(
+      'GET /projects/%s is rejected even though Number() would parse it',
+      async (id) => {
+        const res = await request(app).get(`/projects/${id}`);
+        expect(res.statusCode).toEqual(400);
+      }
+    );
+
+    it('accepts a name of exactly 255 characters and an explicit userId: null', async () => {
+      const name = 'n'.repeat(255);
+      const res = await request(app).post('/projects').send({ name, userId: null });
+      expect(res.statusCode).toBe(201);
+      expect(res.body.name).toBe(name);
+      expect(res.body.userId).toBeNull();
+    });
+
     it.each([
+      [{ name: 'P', userId: 0 }, 'userId'],
+      [{ name: 'P', userId: -1 }, 'userId'],
+      [{ name: 'P', userId: 1.5 }, 'userId'],
       [{ name: 'P', userId: 'abc' }, 'userId'],
       [{ name: 'P', initialTasks: 'not-an-array' }, 'initialTasks'],
       [{ name: 'P', initialTasks: [null] }, 'initialTasks[0]'],
@@ -212,9 +306,19 @@ describe('Taskflow API — Core Scenarios on Prototype Data', () => {
       expect(res.body.error.message).toContain(fragment);
     });
 
-    it('POST /tasks with non-integer projectId returns 400', async () => {
-      const res = await request(app).post('/tasks').send({ title: 'T', projectId: 'x' });
+    it.each(['x', 1.5, 0, -2])('POST /tasks with projectId %p returns 400', async (projectId) => {
+      const res = await request(app).post('/tasks').send({ title: 'T', projectId });
       expect(res.statusCode).toEqual(400);
+      expect(res.body.error.message).toBe('projectId must be a positive integer when provided');
+      expect(await taskRepo.findAll()).toHaveLength(0);
+    });
+
+    it('PATCH /tasks/:id/status with an unknown status returns 400 and keeps the task', async () => {
+      const { body: task } = await request(app).post('/tasks').send({ title: 'T' });
+      const res = await request(app).patch(`/tasks/${task.id}/status`).send({ status: 'CLOSED' });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error.message).toContain('Allowed values: TODO, IN_PROGRESS, DONE');
+      expect((await taskRepo.findById(task.id)).status).toBe('TODO');
     });
   });
 
