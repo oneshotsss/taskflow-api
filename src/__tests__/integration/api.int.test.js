@@ -83,6 +83,29 @@ describe('Scenario 2: GET /projects without N+1', () => {
     expect((await request(app).get('/projects/12345')).statusCode).toBe(404);
     expect((await request(app).get('/projects/abc')).statusCode).toBe(400);
   });
+
+  // Regression: tasks in GET come from json_agg (PostgreSQL renders timestamptz
+  // as "…06.478225+00:00"), while POST returns them through the pg driver
+  // ("…06.478Z"). The same task had two different createdAt values. The
+  // in-memory tests cannot see this: there every timestamp is an ISO string.
+  it('GET /projects/:id and GET /projects return exactly what POST returned', async () => {
+    const { body: created } = await createProject({
+      name: 'Same shape',
+      userId: 1,
+      initialTasks: [{ title: 'a' }, { title: 'b' }],
+    });
+    const { body: empty } = await createProject({ name: 'No tasks' });
+
+    const one = await request(app).get(`/projects/${created.id}`);
+    const all = await request(app).get('/projects');
+
+    expect(one.body).toEqual(created);
+    expect(all.body).toEqual([created, empty]);
+    expect(empty.tasks).toEqual([]);
+    for (const task of created.tasks) {
+      expect(task.createdAt).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    }
+  });
 });
 
 describe('Scenario 3: PATCH /tasks/:id/status', () => {
@@ -98,6 +121,45 @@ describe('Scenario 3: PATCH /tasks/:id/status', () => {
 
     const stored = await db().query('SELECT status FROM tasks WHERE id = $1', [id]);
     expect(stored.rows[0].status).toBe('DONE');
+  });
+
+  it('returns 404 for a task that does not exist and writes nothing', async () => {
+    const res = await request(app).patch('/tasks/4242/status').send({ status: 'IN_PROGRESS' });
+    expect(res.statusCode).toBe(404);
+    expect(await count('tasks')).toBe(0);
+  });
+});
+
+// Previously only covered on the in-memory prototype: the SQL behind
+// POST /tasks and GET /tasks never ran against PostgreSQL in any test.
+describe('POST /tasks and GET /tasks', () => {
+  it('stores a task in a project and a task without one, lists them in id order', async () => {
+    const { body: project } = await createProject({ name: 'P' });
+    const inProject = await request(app).post('/tasks').send({ title: 'A', projectId: project.id });
+    const loose = await request(app).post('/tasks').send({ title: 'B' });
+
+    expect(inProject.statusCode).toBe(201);
+    expect(inProject.body).toMatchObject({ title: 'A', status: 'TODO', projectId: project.id });
+    expect(loose.body.projectId).toBeNull();
+
+    const rows = await db().query('SELECT title, status, project_id FROM tasks ORDER BY id');
+    expect(rows.rows).toEqual([
+      { title: 'A', status: 'TODO', project_id: project.id },
+      { title: 'B', status: 'TODO', project_id: null },
+    ]);
+    const list = await request(app).get('/tasks');
+    expect(list.body).toEqual([inProject.body, loose.body]);
+  });
+
+  it('returns 400 (FK) for a projectId that does not exist', async () => {
+    const res = await request(app).post('/tasks').send({ title: 'A', projectId: 777 });
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Project referenced by projectId does not exist',
+      details: { constraint: 'tasks_project_id_fkey' },
+    });
+    expect(await count('tasks')).toBe(0);
   });
 });
 
@@ -153,6 +215,24 @@ describe('Idempotency-Key', () => {
     const res = await createProject({ ...body, name: 'Different' }, 'conflict-1');
     expect(res.statusCode).toBe(409);
     expect(await count('projects')).toBe(1);
+  });
+
+  it('a key that is stored without a response is reported as in progress (409)', async () => {
+    // State a crashed writer would leave behind if the claim were ever committed
+    // separately from the project (the safety net in resolveStoredKey).
+    const { createHash } = require('node:crypto');
+    const hash = createHash('sha256')
+      .update(JSON.stringify({ name: 'Idem', userId: 1, initialTasks: [{ title: 'once' }] }))
+      .digest('hex');
+    await db().query(
+      `INSERT INTO idempotency_keys (scope, key, request_hash) VALUES ('POST /projects', 'stuck-1', $1)`,
+      [hash]
+    );
+
+    const res = await createProject(body, 'stuck-1');
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error.message).toBe('A request with this Idempotency-Key is still in progress');
+    expect(await count('projects')).toBe(0);
   });
 
   it('a request rolled back by an FK error does not keep its key', async () => {

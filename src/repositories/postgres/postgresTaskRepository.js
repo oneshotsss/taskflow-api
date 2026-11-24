@@ -24,18 +24,6 @@ class PostgresTaskRepository {
     return res.rows[0] || null;
   }
 
-  async findByProjectId(projectId, client) {
-    const executor = client || getPool();
-    const query = `
-      SELECT id, title, status, project_id AS "projectId", created_at AS "createdAt"
-      FROM tasks
-      WHERE project_id = $1
-      ORDER BY id ASC;
-    `;
-    const res = await runQuery(executor, query, [projectId]);
-    return res.rows;
-  }
-
   async findAll(client) {
     const executor = client || getPool();
     const query = `
@@ -57,13 +45,6 @@ class PostgresTaskRepository {
     `;
     const res = await runQuery(executor, query, [newStatus, id]);
     return res.rows[0] || null;
-  }
-
-  async deleteByProjectId(projectId, client) {
-    const executor = client || getPool();
-    const query = `DELETE FROM tasks WHERE project_id = $1 RETURNING id;`;
-    const res = await runQuery(executor, query, [projectId]);
-    return res.rowCount;
   }
 }
 

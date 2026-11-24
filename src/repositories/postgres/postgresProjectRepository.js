@@ -2,6 +2,12 @@ const { getPool, withTransaction } = require('../../db/pool');
 const { runQuery } = require('../../db/query');
 const { resolveStoredKey } = require('../idempotency');
 
+// Inside json_agg the pg driver does not parse timestamps, PostgreSQL renders
+// them itself ("2026-11-24 09:14:36.325403+00"). Format them exactly like
+// Date#toISOString() so a task looks the same in POST and GET responses.
+const ISO_TIMESTAMP = (column) =>
+  `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
 class PostgresProjectRepository {
   async create({ name, userId }, client) {
     const executor = client || getPool();
@@ -12,28 +18,6 @@ class PostgresProjectRepository {
     `;
     const res = await runQuery(executor, query, [name, userId || null]);
     return res.rows[0];
-  }
-
-  async findById(id, client) {
-    const executor = client || getPool();
-    const query = `
-      SELECT id, name, user_id AS "userId", created_at AS "createdAt"
-      FROM projects
-      WHERE id = $1;
-    `;
-    const res = await runQuery(executor, query, [id]);
-    return res.rows[0] || null;
-  }
-
-  async findAll(client) {
-    const executor = client || getPool();
-    const query = `
-      SELECT id, name, user_id AS "userId", created_at AS "createdAt"
-      FROM projects
-      ORDER BY id ASC;
-    `;
-    const res = await runQuery(executor, query);
-    return res.rows;
   }
 
   // Optimized single-query project listing with tasks (ELIMINATES N+1)
@@ -52,7 +36,7 @@ class PostgresProjectRepository {
               'title', t.title,
               'status', t.status,
               'projectId', t.project_id,
-              'createdAt', t.created_at
+              'createdAt', ${ISO_TIMESTAMP('t.created_at')}
             )
           ) FILTER (WHERE t.id IS NOT NULL),
           '[]'::json
@@ -82,7 +66,7 @@ class PostgresProjectRepository {
               'title', t.title,
               'status', t.status,
               'projectId', t.project_id,
-              'createdAt', t.created_at
+              'createdAt', ${ISO_TIMESTAMP('t.created_at')}
             )
           ) FILTER (WHERE t.id IS NOT NULL),
           '[]'::json
@@ -94,13 +78,6 @@ class PostgresProjectRepository {
     `;
     const res = await runQuery(executor, query, [id]);
     return res.rows[0] || null;
-  }
-
-  async delete(id, client) {
-    const executor = client || getPool();
-    const query = `DELETE FROM projects WHERE id = $1 RETURNING id;`;
-    const res = await runQuery(executor, query, [id]);
-    return res.rowCount > 0;
   }
 
   // Scenario 4: tasks and project are removed in ONE transaction on ONE client.
