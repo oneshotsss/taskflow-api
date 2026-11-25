@@ -89,7 +89,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
   ```
 - **Behavior**: Project and tasks are inserted within a single database transaction. If any task fails validation, the entire transaction is rolled back.
 - **Success**: `201 Created` with project object and attached tasks.
-- **Error**: `400 Bad Request` if name is missing or any task title is empty.
+- **Idempotency**: Optional `Idempotency-Key` header. Repeating the same request with the same key returns the cached `201 Created` response with `Idempotent-Replayed: true` without creating a duplicate.
+- **Error**: `400 Bad Request` if name is missing or any task title is empty; `409 Conflict` (`CONFLICT_ERROR`) if the same `Idempotency-Key` is reused with a different request body.
 
 ### Scenario 2: Project Listing & Details without N+1
 
@@ -162,15 +163,19 @@ response, whether the entity comes from `POST` or `GET`.
 
 ## 7. Testing (Laboratory Work 3)
 
-Strategy and tool choice: ADR-0006. Results and analysis: `DEFENSE.md`.
+Strategy and tool choices are documented in `docs/adr/0006-testing-strategy-and-mutation-testing.md`; results and audit are in `DEFENSE-task3.md`.
 
-1. **All levels**: unit (one module per file, stubs), API (supertest + in-memory), integration
-   (supertest + PostgreSQL `taskflow_test`), E2E (`node src/index.js` + PostgreSQL
-   `taskflow_e2e_test`, HTTP only).
-2. **One command**: `make test` (`npm run test:all`) starts PostgreSQL, migrates, starts the service
-   and runs every level; non-zero exit code if any level fails.
-3. **Branch coverage gates**: unit + API ≥ 90% branches globally and 100% branches for services,
-   error handler, `db/query`, `db/pool`, idempotency; integration: 100% lines of the SQL repositories.
-4. **Fully covered unit module**: `src/services/validation.js` — 100% branches, 100% mutation score.
-5. **Mutation testing**: `make mutation` (Stryker), score ≥ 90% (`break` threshold); every survivor
-   classified in `docs/testing/mutation-report.md`.
+### What Each Test Level Must Prove
+
+1. **Unit (`src/__tests__/unit/`, `postgresRepositories.test.js`)**: Proves that business rules, boundary values, state-machine transitions (`TODO → IN_PROGRESS → DONE`), error translation (`translatePgError`), and retry/pool logic work in isolation with stubs/fakes. In particular, `src/services/validation.js` must have every valid and invalid input case covered.
+2. **API (`src/__tests__/app.test.js`)**: Proves the HTTP contract on `app` with in-memory repositories — status codes, JSON response/error shapes (`VALIDATION_ERROR`, `NOT_FOUND`, `CONFLICT_ERROR`, `PAYLOAD_TOO_LARGE`, `INTERNAL_SERVER_ERROR`), headers (`X-Process-ID`), and that failed requests leave no partial data.
+3. **Integration (`src/__tests__/integration/`)**: Proves that SQL queries, `LEFT JOIN ... json_agg`, transactions (`BEGIN`/`COMMIT`/`ROLLBACK`), FK/unique constraint mapping, `Idempotency-Key` concurrency/replay/409, and UTC `createdAt` formatting work against a real PostgreSQL instance (`taskflow_test`).
+4. **E2E (`test/e2e/`)**: Proves the full system as a black box against a real `node src/index.js` process and a freshly created `taskflow_e2e_test` database (HTTP only via `fetch`): fail-fast exit without DB, automatic schema migration on startup, `/health` and `/version`, independent user-journey scenarios, and `processId` logging.
+5. **Mutation (`make mutation`)**: Proves that assertions actually verify behavior rather than just executing lines.
+
+### Definition of Done (When Testing Is Ready)
+
+- `make test` (`npm run test:all`) starts PostgreSQL via Docker, runs all 4 levels in one command, and exits `0` only if every level passes.
+- Critical logic meets branch-coverage ratchets (`jest.config.js`, `jest.integration.config.js`), and `src/services/validation.js` has 100% branches and 100% mutation score.
+- `make mutation` (Stryker) achieves ≥ 90% mutation score, and every surviving mutant is classified in `docs/testing/mutation-report.md`.
+- ESLint (`npm run lint`) and Prettier (`npx prettier --check .`) pass with 0 errors.

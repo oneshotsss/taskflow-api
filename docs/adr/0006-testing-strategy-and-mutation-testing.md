@@ -82,10 +82,15 @@ SQL repositories are not mutated: they are covered by the integration suite (100
 
 ### Positive Consequences
 
-- `make test` from a stopped container to 267 green tests in ~30 s; the same on Windows via
+- `make test` from a stopped container to 267 green tests in about 2 minutes (docker start, the E2E server restarts and database re-creation dominate); the same on Windows via
   `npm run test:all`.
 - Branch thresholds (`jest.config.js`, `jest.integration.config.js`) and the Stryker `break: 90`
   threshold make any loss of test strength fail the run.
+  The 100% branch thresholds are deliberately limited to the files with business rules and error
+  mapping (`services`, `errorHandler`, `db/query`, `db/pool`, `idempotency`); the global floor is
+  90/95. Course lecture §7.8 recommends a ratchet (never lower than the current value) instead of
+  a fixed target: these numbers are the current values, and a coverage drop fails the run, so they
+  act as a ratchet. They must only be raised, never lowered to make a build pass.
 - Separate databases with a `test` name guard: tests cannot truncate or drop `taskflow_db`.
 
 ### Negative Consequences

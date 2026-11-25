@@ -1,6 +1,6 @@
 // End-to-end user journey against the running service (see globalSetup.js).
 // Black box: only HTTP via fetch, no imports from src/, no direct SQL.
-// Steps run in order and share state, like one client session would.
+// Each test creates its own data, so tests are independent of order.
 const fs = require('node:fs');
 const { execSync } = require('node:child_process');
 const { setTimeout: sleep } = require('node:timers/promises');
@@ -41,71 +41,85 @@ describe('infrastructure', () => {
 });
 
 describe('journey: plan a sprint, work on it, clean up', () => {
-  const state = {};
-  const sprint = {
-    name: 'Sprint 42',
+  // Every step creates its own data with a unique name/key and asserts only on
+  // that data, so any step can run alone (`-t`) or in any order.
+  let seq = 0;
+  const sprintBody = () => ({
+    name: `Sprint ${++seq}-${Date.now()}`,
     initialTasks: [{ title: 'Design API' }, { title: 'Write tests' }],
-  };
-
-  it('1. creates a project with tasks (Idempotency-Key set by the client)', async () => {
+  });
+  const createSprint = async (key) => {
+    const body = sprintBody();
     const res = await api('POST', '/projects', {
-      body: sprint,
-      headers: { 'Idempotency-Key': 'e2e-sprint-42' },
+      body,
+      headers: key ? { 'Idempotency-Key': key } : {},
     });
+    return { body, res, project: res.body };
+  };
+  const uniqueKey = (label) => `e2e-${label}-${Date.now()}-${++seq}`;
+
+  it('creates a project with tasks (Idempotency-Key set by the client)', async () => {
+    const { res, body } = await createSprint(uniqueKey('create'));
 
     expect(res.status).toBe(201);
     expect(res.headers.get('idempotent-replayed')).toBeNull();
-    expect(res.body).toMatchObject({ name: 'Sprint 42', userId: null });
+    expect(res.body).toMatchObject({ name: body.name, userId: null });
     expect(res.body.tasks.map((t) => [t.title, t.status, t.projectId])).toEqual([
       ['Design API', 'TODO', res.body.id],
       ['Write tests', 'TODO', res.body.id],
     ]);
-    state.project = res.body;
   });
 
-  it('2. a network retry with the same key returns the same project, creates nothing', async () => {
-    const retry = await api('POST', '/projects', {
-      body: sprint,
-      headers: { 'Idempotency-Key': 'e2e-sprint-42' },
-    });
+  it('a network retry with the same key returns the same project, creates nothing', async () => {
+    const key = uniqueKey('retry');
+    const { body, project } = await createSprint(key);
+    const before = (await api('GET', '/projects')).body.length;
+
+    const retry = await api('POST', '/projects', { body, headers: { 'Idempotency-Key': key } });
     expect(retry.status).toBe(201);
     expect(retry.headers.get('idempotent-replayed')).toBe('true');
-    expect(retry.body).toEqual(state.project);
-    expect((await api('GET', '/projects')).body).toHaveLength(1);
+    expect(retry.body).toEqual(project);
+    expect((await api('GET', '/projects')).body).toHaveLength(before);
   });
 
-  it('3. the same key with another body is refused with 409', async () => {
+  it('the same key with another body is refused with 409', async () => {
+    const key = uniqueKey('conflict');
+    await createSprint(key);
     const res = await api('POST', '/projects', {
       body: { name: 'Other' },
-      headers: { 'Idempotency-Key': 'e2e-sprint-42' },
+      headers: { 'Idempotency-Key': key },
     });
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('CONFLICT_ERROR');
   });
 
-  it('4. reading the project returns exactly what was created', async () => {
-    expect((await api('GET', `/projects/${state.project.id}`)).body).toEqual(state.project);
-    expect((await api('GET', '/projects')).body).toEqual([state.project]);
+  it('reading the project returns exactly what was created', async () => {
+    const { project } = await createSprint();
+    expect((await api('GET', `/projects/${project.id}`)).body).toEqual(project);
+    expect((await api('GET', '/projects')).body).toContainEqual(project);
   });
 
-  it('5. adds one more task to the project and a second project with its own task', async () => {
-    const extra = await api('POST', '/tasks', {
-      body: { title: 'Deploy', projectId: state.project.id },
-    });
+  it('adds one more task to a project; another project keeps its own tasks', async () => {
+    const { project } = await createSprint();
+    const other = (
+      await api('POST', '/projects', {
+        body: { name: `Backlog-${Date.now()}`, initialTasks: [{ title: 'Someday' }] },
+      })
+    ).body;
+
+    const extra = await api('POST', '/tasks', { body: { title: 'Deploy', projectId: project.id } });
     expect(extra.status).toBe(201);
-    state.deployTask = extra.body;
 
-    const other = await api('POST', '/projects', {
-      body: { name: 'Backlog', initialTasks: [{ title: 'Someday' }] },
-    });
-    state.other = other.body;
-
-    const project = await api('GET', `/projects/${state.project.id}`);
-    expect(project.body.tasks.map((t) => t.title)).toEqual(['Design API', 'Write tests', 'Deploy']);
+    const read = await api('GET', `/projects/${project.id}`);
+    expect(read.body.tasks.map((t) => t.title)).toEqual(['Design API', 'Write tests', 'Deploy']);
+    expect((await api('GET', `/projects/${other.id}`)).body.tasks.map((t) => t.title)).toEqual([
+      'Someday',
+    ]);
   });
 
-  it('6. moves a task TODO -> IN_PROGRESS -> DONE; every other move is refused', async () => {
-    const id = state.project.tasks[0].id;
+  it('moves a task TODO -> IN_PROGRESS -> DONE; every other move is refused', async () => {
+    const { project } = await createSprint();
+    const id = project.tasks[0].id;
     const move = (status) => api('PATCH', `/tasks/${id}/status`, { body: { status } });
 
     expect((await move('DONE')).status).toBe(400);
@@ -116,27 +130,30 @@ describe('journey: plan a sprint, work on it, clean up', () => {
     expect((await move('DONE')).body.status).toBe('DONE');
     expect((await move('IN_PROGRESS')).status).toBe(400);
 
-    const tasks = (await api('GET', '/tasks')).body;
-    expect(tasks.find((t) => t.id === id).status).toBe('DONE');
-    expect(tasks.filter((t) => t.status === 'DONE')).toHaveLength(1);
+    const read = (await api('GET', `/projects/${project.id}`)).body;
+    expect(read.tasks.map((t) => t.status)).toEqual(['DONE', 'TODO']);
   });
 
-  it('7. deletes the project with all its tasks; the other project is untouched', async () => {
-    const del = await api('DELETE', `/projects/${state.project.id}`);
+  it('deletes the project with all its tasks; another project is untouched', async () => {
+    const { project } = await createSprint();
+    const other = (await createSprint()).project;
+
+    const del = await api('DELETE', `/projects/${project.id}`);
     expect(del.status).toBe(204);
     expect(del.body).toBeNull();
 
-    expect((await api('GET', `/projects/${state.project.id}`)).status).toBe(404);
-    expect((await api('DELETE', `/projects/${state.project.id}`)).status).toBe(404);
+    expect((await api('GET', `/projects/${project.id}`)).status).toBe(404);
+    expect((await api('DELETE', `/projects/${project.id}`)).status).toBe(404);
     const tasks = (await api('GET', '/tasks')).body;
-    expect(tasks.map((t) => t.title)).toEqual(['Someday']);
-    expect((await api('GET', '/projects')).body).toEqual([state.other]);
+    expect(tasks.filter((t) => t.projectId === project.id)).toEqual([]);
+    expect((await api('GET', `/projects/${other.id}`)).body).toEqual(other);
   });
 
-  it('8. a task cannot be attached to the deleted project (FK -> 400, not 500)', async () => {
-    const res = await api('POST', '/tasks', {
-      body: { title: 'Orphan', projectId: state.project.id },
-    });
+  it('a task cannot be attached to a deleted project (FK -> 400, not 500)', async () => {
+    const { project } = await createSprint();
+    await api('DELETE', `/projects/${project.id}`);
+
+    const res = await api('POST', '/tasks', { body: { title: 'Orphan', projectId: project.id } });
     expect(res.status).toBe(400);
     expect(res.body.error.message).toBe('Project referenced by projectId does not exist');
   });
