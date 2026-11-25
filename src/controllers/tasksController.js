@@ -6,13 +6,14 @@ const getTasks = async (req, res) => {
 };
 
 const createTask = async (req, res) => {
-  const { title, projectId } = req.body;
+  // req.body is undefined when the request has no JSON body (Express 5).
+  const { title, projectId } = req.body ?? {};
   const newTask = await addTask({ title, projectId });
   res.status(201).json(newTask);
 };
 
 const handleUpdateStatus = async (req, res) => {
-  const { status } = req.body;
+  const { status } = req.body ?? {};
   const updated = await updateTaskStatus(req.params.id, status);
   res.status(200).json(updated);
 };

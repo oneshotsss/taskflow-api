@@ -89,7 +89,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
   ```
 - **Behavior**: Project and tasks are inserted within a single database transaction. If any task fails validation, the entire transaction is rolled back.
 - **Success**: `201 Created` with project object and attached tasks.
-- **Error**: `400 Bad Request` if name is missing or any task title is empty.
+- **Idempotency**: Optional `Idempotency-Key` header. Repeating the same request with the same key returns the cached `201 Created` response with `Idempotent-Replayed: true` without creating a duplicate.
+- **Error**: `400 Bad Request` if name is missing or any task title is empty; `409 Conflict` (`CONFLICT_ERROR`) if the same `Idempotency-Key` is reused with a different request body.
 
 ### Scenario 2: Project Listing & Details without N+1
 
@@ -136,10 +137,16 @@ All errors return the following structure:
 
 Standard HTTP Error Codes:
 
-- `400 Bad Request` (`VALIDATION_ERROR`)
-- `404 Not Found` (`NOT_FOUND`)
+- `400 Bad Request` (`VALIDATION_ERROR`) — invalid fields or ids, a missing body, a body that is not valid JSON
+- `404 Not Found` (`NOT_FOUND`) — unknown entity, and also unknown routes (JSON, not an HTML page)
 - `409 Conflict` (`CONFLICT_ERROR`)
-- `500 Internal Server Error` (`INTERNAL_SERVER_ERROR`)
+- `413 Payload Too Large` (`PAYLOAD_TOO_LARGE`)
+- `500 Internal Server Error` (`INTERNAL_SERVER_ERROR`) — the message is always the generic
+  `"An unexpected error occurred"` unless the error is one of ours (`AppError`); internals such as
+  driver messages are only logged, together with the `processId` the client receives.
+
+Timestamps (`createdAt`) are ISO-8601 UTC with milliseconds (`2026-11-24T09:14:36.325Z`) in every
+response, whether the entity comes from `POST` or `GET`.
 
 ---
 
@@ -153,3 +160,22 @@ Standard HTTP Error Codes:
 6. **Context Propagation**: `processId` appears in every log and error response via `AsyncLocalStorage`.
 7. **Single Error Handler**: Express error middleware handles all errors without per-route try/catch blocks.
 8. **Automated Verification**: `npm test` passes covering all 4 core scenarios and error paths.
+
+## 7. Testing (Laboratory Work 3)
+
+Strategy and tool choices are documented in `docs/adr/0006-testing-strategy-and-mutation-testing.md`; results and audit are in `DEFENSE-task3.md`.
+
+### What Each Test Level Must Prove
+
+1. **Unit (`src/__tests__/unit/`, `postgresRepositories.test.js`)**: Proves that business rules, boundary values, state-machine transitions (`TODO → IN_PROGRESS → DONE`), error translation (`translatePgError`), and retry/pool logic work in isolation with stubs/fakes. In particular, `src/services/validation.js` must have every valid and invalid input case covered.
+2. **API (`src/__tests__/app.test.js`)**: Proves the HTTP contract on `app` with in-memory repositories — status codes, JSON response/error shapes (`VALIDATION_ERROR`, `NOT_FOUND`, `CONFLICT_ERROR`, `PAYLOAD_TOO_LARGE`, `INTERNAL_SERVER_ERROR`), headers (`X-Process-ID`), and that failed requests leave no partial data.
+3. **Integration (`src/__tests__/integration/`)**: Proves that SQL queries, `LEFT JOIN ... json_agg`, transactions (`BEGIN`/`COMMIT`/`ROLLBACK`), FK/unique constraint mapping, `Idempotency-Key` concurrency/replay/409, and UTC `createdAt` formatting work against a real PostgreSQL instance (`taskflow_test`).
+4. **E2E (`test/e2e/`)**: Proves the full system as a black box against a real `node src/index.js` process and a freshly created `taskflow_e2e_test` database (HTTP only via `fetch`): fail-fast exit without DB, automatic schema migration on startup, `/health` and `/version`, independent user-journey scenarios, and `processId` logging.
+5. **Mutation (`make mutation`)**: Proves that assertions actually verify behavior rather than just executing lines.
+
+### Definition of Done (When Testing Is Ready)
+
+- `make test` (`npm run test:all`) starts PostgreSQL via Docker, runs all 4 levels in one command, and exits `0` only if every level passes.
+- Critical logic meets branch-coverage ratchets (`jest.config.js`, `jest.integration.config.js`), and `src/services/validation.js` has 100% branches and 100% mutation score.
+- `make mutation` (Stryker) achieves ≥ 90% mutation score, and every surviving mutant is classified in `docs/testing/mutation-report.md`.
+- ESLint (`npm run lint`) and Prettier (`npx prettier --check .`) pass with 0 errors.

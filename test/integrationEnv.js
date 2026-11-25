@@ -1,5 +1,6 @@
-// Connection settings for integration tests. They use a SEPARATE database
-// (taskflow_test by default) on the same server, which the tests truncate freely.
+// Connection settings for integration and E2E tests. They use SEPARATE databases
+// (taskflow_test, taskflow_e2e_test by default) on the same server, which the
+// tests truncate or drop freely.
 const fs = require('node:fs');
 const path = require('node:path');
 const { URL } = require('node:url');
@@ -10,16 +11,25 @@ if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
 const port = process.env.POSTGRES_PORT || '5432';
 const base = `postgres://taskflow_user:taskflow_password@localhost:${port}`;
 
-const testDatabaseUrl = process.env.TEST_DATABASE_URL || `${base}/taskflow_test`;
-// Used only to CREATE DATABASE taskflow_test when it does not exist yet.
+// Used only to CREATE/DROP the test databases.
 const adminDatabaseUrl = process.env.TEST_ADMIN_DATABASE_URL || `${base}/taskflow_db`;
 
-const testDbName = new URL(testDatabaseUrl).pathname.slice(1);
-if (!/test/i.test(testDbName)) {
-  // Tests TRUNCATE every table — never let them touch a non-test database.
-  throw new Error(
-    `Refusing to run integration tests against "${testDbName}": name must contain "test"`
-  );
-}
+const guardedDatabase = (url) => {
+  const name = new URL(url).pathname.slice(1);
+  if (!/test/i.test(name)) {
+    // Tests TRUNCATE (integration) or DROP (E2E) the database — never a real one.
+    throw new Error(`Refusing to run tests against "${name}": name must contain "test"`);
+  }
+  return { url, name };
+};
 
-module.exports = { testDatabaseUrl, adminDatabaseUrl, testDbName };
+const integration = guardedDatabase(process.env.TEST_DATABASE_URL || `${base}/taskflow_test`);
+const e2e = guardedDatabase(process.env.E2E_DATABASE_URL || `${base}/taskflow_e2e_test`);
+
+module.exports = {
+  adminDatabaseUrl,
+  testDatabaseUrl: integration.url,
+  testDbName: integration.name,
+  e2eDatabaseUrl: e2e.url,
+  e2eDbName: e2e.name,
+};

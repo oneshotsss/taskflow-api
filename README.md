@@ -33,12 +33,25 @@ Set `REPO_TYPE=memory` in `.env` (or in the shell) and run `npm start`.
 
 ## Tests
 
-- `npm test` — unit and API tests on the in-memory repositories and a mocked pool
-  (no DB needed; runs in the pre-push hook).
-- `npm run test:integration` — the spec scenarios against a real PostgreSQL, in a **separate
-  database `taskflow_test`** on the same server (created automatically; every table is truncated
-  before each test). Requires `docker compose up -d`. Override with `TEST_DATABASE_URL`
-  (the database name must contain `test`).
+**One command for everything:** `make test` (or `npm run test:all` where `make` is not installed,
+e.g. Windows). It starts PostgreSQL with `docker compose up -d --wait`, then runs unit + API tests
+with coverage, integration tests and E2E tests, and prints a summary. Docker must be running.
+
+| Command                    | Level                                                                                  | Needs DB |
+| -------------------------- | -------------------------------------------------------------------------------------- | -------- |
+| `npm test`                 | unit + API (in-memory repositories, mocked pool); pre-push hook                        | no       |
+| `npm run test:unit`        | the same with coverage and branch thresholds (`coverage/unit/`)                        | no       |
+| `npm run test:integration` | app + real PostgreSQL, database `taskflow_test` (truncated per test)                   | yes      |
+| `npm run test:e2e`         | real `node src/index.js` + database `taskflow_e2e_test` (recreated per run), HTTP only | yes      |
+| `make mutation`            | Stryker mutation testing, report in `reports/mutation/mutation.html`                   | no       |
+
+Test databases live on the same server as `taskflow_db` and are created automatically. Override
+with `TEST_DATABASE_URL` / `E2E_DATABASE_URL`; the database name must contain `test`, because the
+tests truncate (integration) or drop (E2E) it. The E2E server log is written to
+`reports/e2e/server.log`. Set `SKIP_DOCKER=1` for `test:all` if PostgreSQL is provided otherwise.
+
+See [ADR-0006](docs/adr/0006-testing-strategy-and-mutation-testing.md) for the test strategy and
+[the mutation report](docs/testing/mutation-report.md) for the classified surviving mutants.
 
 ## Docker / ports
 
@@ -56,5 +69,6 @@ with a different body returns `409`.
 ## Commands
 
 - `make run`: Starts the application.
-- `make test`: Runs the test suite.
+- `make test`: Starts PostgreSQL and runs unit, API, integration and E2E tests.
+- `make mutation`: Runs mutation testing (Stryker).
 - `make lint`: Runs the linter.

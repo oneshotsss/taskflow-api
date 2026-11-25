@@ -20,7 +20,10 @@
 
 - [ ] `npm run lint` — 0 errors, 0 warnings?
 - [ ] `npx prettier --check .` — all files pass?
-- [ ] `npm test` — all 18+ tests pass?
+- [ ] `make test` (`npm run test:all`) — all four stages PASS (unit + API, integration, E2E)?
+- [ ] Coverage thresholds (branches) met in the unit and integration runs?
+- [ ] `make mutation` — score ≥ 90%, every survivor classified in `docs/testing/mutation-report.md`?
+- [ ] Does each new test assert data/state, not only the status code?
 - [ ] Database pool initializes with fail-fast `SELECT NOW()`?
 
 ## Documentation & Defense
